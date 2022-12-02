@@ -1,0 +1,19 @@
+{:deps {}
+ :aliases {:lint {:extra-deps {clj-kondo/clj-kondo {:mvn/version "2022.09.08"}}
+                  :main-opts ["-m" "clj-kondo.main" "--lint" "."]}
+
+           :nsorg-check {:extra-deps {nsorg-cli/nsorg-cli {:mvn/version "0.3.1"}}
+                         :main-opts ["-m" "nsorg.cli"]}
+
+           :nsorg-fix {:extra-deps {nsorg-cli/nsorg-cli {:mvn/version "0.3.1"}}
+                       :main-opts ["-m" "nsorg.cli" "--replace"]}
+
+           :cljfmt-check {:extra-deps {cljfmt/cljfmt {:mvn/version "0.8.2"}}
+                          :main-opts ["-m" "cljfmt.main" "check"
+                                      "--parallel"
+                                      "--remove-multiple-non-indenting-spaces"]}
+
+           :cljfmt-fix {:extra-deps {cljfmt/cljfmt {:mvn/version "0.8.2"}}
+                        :main-opts ["-m" "cljfmt.main" "fix"
+                                    "--parallel"
+                                    "--remove-multiple-non-indenting-spaces"]}}}
