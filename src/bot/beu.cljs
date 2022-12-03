@@ -12,11 +12,6 @@
        (when-not (str/starts-with? path "/") "/")
        (str/replace path #";jsessionid=[^?]*" "")))
 
-(defn german->iso-date [date]
-  (->> (str/split date #"\.")
-       reverse
-       (str/join "-")))
-
 (defn extract-uri [query fragment]
   (-> fragment
       (.querySelector query)
@@ -29,26 +24,38 @@
                       (.querySelectorAll ".searchresult .row"))]
     (map (fn [fragment]
            {:report-type report-type
+            :report-date (->> (-> fragment (.querySelector "p") .-text)
+                              (re-find #"Publikation vom: (.+)")
+                              last)
             :report-overview-uri (extract-uri "a" fragment)
-            :report-pdf-uri (extract-uri "a.downloadLink" fragment)})
+            :report-pdf-uri (extract-uri "a.downloadLink" fragment)
+            :event-location (-> fragment (.querySelector "a") .-firstChild .-text)
+            :event-type (-> fragment (.querySelectorAll "p") last .-text)})
          fragments)))
+
+(defn has-report-details? [report]
+  (contains? #{"Untersuchungsbericht" "Zwischenbericht"}
+             (:report-type report)))
+
+(defn fetch-one-report-detail+ [report]
+  (-> (fetch+ (:report-overview-uri report))
+      (.then ensure-200+)
+      (.then (fn [{:keys [body]}]
+               (let [fragment (-> body
+                                  parse
+                                  (.querySelector "#main"))
+                     info (-> fragment
+                              (.querySelector ".info")
+                              .-text)
+                     [_ event-date] (re-find #"^Thema: .+, Ereignis vom: (.+), Publikation vom: .+$" info)]
+                 (assoc report :event-date event-date))))))
 
 (defn fetch-reports-details+ [reports]
   (js/Promise.all
    (map (fn [report]
-          (-> (fetch+ (:report-overview-uri report))
-              (.then ensure-200+)
-              (.then (fn [{:keys [body]}]
-                       (let [fragment (-> body
-                                          parse
-                                          (.querySelector "#main"))
-                             info (-> fragment
-                                      (.querySelector ".info")
-                                      .-text)
-                             [_ event-type event-date publication-date] (re-find #"^Thema: (.+), Ereignis vom: (.+), Publikation vom: (.+)$" info)]
-                         (merge report {:event-type event-type
-                                        :event-date event-date
-                                        :publication-date publication-date}))))))
+          (if (has-report-details? report)
+            (fetch-one-report-detail+ report)
+            report))
         reports)))
 
 (defn fetch-reports+ [report-type]
