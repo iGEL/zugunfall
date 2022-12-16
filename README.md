@@ -15,7 +15,13 @@ It is written in [ClojureScript](https://clojurescript.org/).
 ## Setup & running it
 
 1. Install [Node.js](https://nodejs.org) & [yarn](https://yarnpkg.com/)
-2. Run `yarn build && node target/app.js`
+2. Create a mastodon application and obtain the access token following the instructions of
+   [this guide](https://docs.joinmastodon.org/client/token/).
+   Scopes should be `read write:statuses write:media`
+3. Run `yarn build`
+4. Run `INSTANCE_BASE_URI=<instance-base-uri> ACCESS_TOKEN=<access-token> node target/app.js`  
+   The `INSTANCE_BASE_URI` is the base URI of the instance including the protocol,
+	 eg. `https://botsin.space`
 
 ## License
 

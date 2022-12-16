@@ -1,7 +1,7 @@
 (ns bot.beu
   (:require
    ["node-html-parser" :refer [parse]]
-   [bot.fetch :refer [ensure-200+ fetch+]]
+   [bot.http :as http]
    [clojure.string :as str]))
 
 (def report-type-uri {"Untersuchungsbericht" "https://www.eisenbahn-unfalluntersuchung.de/SiteGlobals/Forms/Suche/Untersuchungsberichtesuche/Untersuchungsberichtesuche_Formular.html?sortOrder=dateOfIssue_dt+desc"
@@ -23,14 +23,27 @@
                       parse
                       (.querySelectorAll ".searchresult .row"))]
     (map (fn [fragment]
-           {:report-type report-type
+           {:report-type (str/trim report-type)
             :report-date (->> (-> fragment (.querySelector "p") .-text)
                               (re-find #"Publikation vom: (.+)")
-                              last)
-            :report-overview-uri (extract-uri "a" fragment)
-            :report-pdf-uri (extract-uri "a.downloadLink" fragment)
-            :event-location (-> fragment (.querySelector "a") .-firstChild .-text)
-            :event-type (-> fragment (.querySelectorAll "p") last .-text)})
+                              last
+                              str/trim)
+            :report-overview-uri (->> fragment
+                                      (extract-uri "a")
+                                      str/trim)
+            :report-pdf-uri (->> fragment
+                                 (extract-uri "a.downloadLink")
+                                 str/trim)
+            :event-location (-> fragment
+                                (.querySelector "a")
+                                .-firstChild
+                                .-text
+                                str/trim)
+            :event-type (-> fragment
+                            (.querySelectorAll "p")
+                            last
+                            .-text
+                            str/trim)})
          fragments)))
 
 (defn has-report-details? [report]
@@ -38,8 +51,8 @@
              (:report-type report)))
 
 (defn fetch-one-report-detail+ [report]
-  (-> (fetch+ (:report-overview-uri report))
-      (.then ensure-200+)
+  (-> (http/get+ (:report-overview-uri report))
+      (.then http/ensure-ok+)
       (.then (fn [{:keys [body]}]
                (let [fragment (-> body
                                   parse
@@ -48,7 +61,7 @@
                               (.querySelector ".info")
                               .-text)
                      [_ event-date] (re-find #"^Thema: .+, Ereignis vom: (.+), Publikation vom: .+$" info)]
-                 (assoc report :event-date event-date))))))
+                 (assoc report :event-date (str/trim event-date)))))))
 
 (defn fetch-reports-details+ [reports]
   (js/Promise.all
@@ -59,6 +72,6 @@
         reports)))
 
 (defn fetch-reports+ [report-type]
-  (-> (fetch+ (report-type-uri report-type))
-      (.then ensure-200+)
+  (-> (http/get+ (report-type-uri report-type))
+      (.then http/ensure-ok+)
       (.then (partial extract-search-results report-type))))
