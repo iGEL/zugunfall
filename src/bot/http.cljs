@@ -1,6 +1,7 @@
 (ns bot.http
   (:require
-   ["node-fetch$default" :as node-fetch]
+   ["node-fetch" :as node-fetch]
+   ["node-fetch$default" :as fetch]
    [clojure.string :as string]))
 
 (defn ensure-ok+ [{:keys [ok? status uri] :as response}]
@@ -18,8 +19,14 @@
       (assoc response :body (js->clj json :keywordize-keys true)))
     response))
 
+(defn raw-request+
+  ([uri]
+   (raw-request+ uri {}))
+  ([uri opts]
+   (fetch uri (clj->js opts))))
+
 (defn request+ [uri opts]
-  (-> (node-fetch uri (clj->js opts))
+  (-> (raw-request+ uri (clj->js opts))
       (.then (fn [response]
                (-> (js/Promise.all [{:uri uri
                                      :status (.-status response)
@@ -42,9 +49,6 @@
   ([uri body]
    (post+ uri body {}))
   ([uri body opts]
-   (prn (assoc opts
-               :method "POST"
-               :body body))
    (request+ uri (assoc opts
                         :method "POST"
                         :body body))))
@@ -56,3 +60,14 @@
    (post+ uri
           (.stringify js/JSON (clj->js body))
           (assoc-in opts [:headers :content-type] "application/json"))))
+
+(defn multi-part-post+
+  ([uri parts]
+   (multi-part-post+ uri parts {}))
+  ([uri parts opts]
+   (let [form-data (node-fetch/FormData.)]
+     (doseq [{:keys [name file value content-type]} parts]
+       (if file
+         (.set form-data name (node-fetch/fileFromSync file content-type))
+         (.set form-data name value)))
+     (post+ uri form-data opts))))

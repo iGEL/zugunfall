@@ -5,6 +5,7 @@
 
 (def instance-base-uri (-> js/process .-env .-INSTANCE_BASE_URI))
 (def access-token (-> js/process .-env .-ACCESS_TOKEN))
+(def description-max-length 1000)
 
 (defn get+
   ([path]
@@ -24,6 +25,10 @@
                         (assoc-in opts [:headers :authorization] (str "Bearer " access-token)))
        (.then http/ensure-ok+)
        (.then http/parse-json+))))
+
+(defn multi-part-post+ [path parts opts]
+  (-> (http/multi-part-post+ (str instance-base-uri path) parts opts)
+      (.then http/parse-json+)))
 
 (def account+
   (memoize
@@ -54,3 +59,28 @@
 
 (defn post-status+ [status]
   (post+ "/api/v1/statuses" status))
+
+(defn shortened-description [description]
+  (let [bytes (.encode (js/TextEncoder.) description)]
+    (if (>= (.-length bytes) description-max-length)
+      (let [shortened-bytes (.slice bytes 0 (- description-max-length 4))
+            tdn (.decode (js/TextDecoder. "utf-8") shortened-bytes)]
+        (str (.replace tdn #"\uFFFD" "") "…"))
+      description)))
+
+(defn upload-media+ [{:keys [path description content-type] :as info}]
+  (-> (multi-part-post+ "/api/v2/media"
+                        [{:name "description" :value (shortened-description description)}
+                         {:name "file" :file path :content-type content-type}]
+                        {:headers {:authorization (str "Bearer " access-token)}})
+      (.then (fn [{:keys [status], {:keys [x-ratelimit-reset]} :headers, :as response}]
+               (if (= 429 status)
+                 (let [wait-time (- (js/Date.parse x-ratelimit-reset)
+                                    (js/Date.now)
+                                    -1000)]
+                   (println (str "Got 429 Too Many Requests. Retrying in " wait-time "ms"))
+                   (-> (js/Promise. (fn [resolve]
+                                      (js/setTimeout resolve wait-time)))
+                       (.then (partial upload-media+ info))))
+                 response)))
+      (.then http/ensure-ok+)))
