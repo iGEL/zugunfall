@@ -8,13 +8,13 @@
 (def visibility (or (-> js/process .-env .-VISIBILITY)
                     "unlisted"))
 
-(defn newest-link-on-masto+ []
+(defn newest-links-on-masto+ []
   (-> (mastodon/get-statuses+)
       (.then (fn [statuses]
                (->> statuses
                     (map mastodon/status-first-link)
                     (filter identity)
-                    first)))))
+                    set)))))
 
 (defn report->status [{:keys [report-type event-type event-date event-location report-overview-uri interesting-pages]}]
   {:status (str report-type " über " event-type " am " event-date " in " event-location "\n"
@@ -26,16 +26,27 @@
                    (map :media-id)
                    (filter identity))})
 
+(defn reports-not-on-masto [newest-links-on-masto reports]
+  (-> (reduce (fn [{:keys [newest-links-on-masto] :as prev} {:keys [report-overview-uri] :as report}]
+                (if (or (contains? newest-links-on-masto report-overview-uri)
+                        (empty? newest-links-on-masto))
+                  (update prev :newest-links-on-masto disj report-overview-uri)
+                  (update prev :reports-not-on-masto conj report)))
+              {:newest-links-on-masto newest-links-on-masto
+               :reports-not-on-masto []}
+              (reverse reports))
+      :reports-not-on-masto
+      reverse))
+
 (defn main []
-  (-> (js/Promise.all [(newest-link-on-masto+)
+  (-> (js/Promise.all [(newest-links-on-masto+)
                        (beu/fetch-reports+ "Untersuchungsbericht")
                        (beu/fetch-reports+ "Zwischenbericht")])
-      (.then (fn [[newest-link final-reports intermediate-reports]]
+      (.then (fn [[newest-links-on-masto final-reports intermediate-reports]]
                (->> (concat final-reports intermediate-reports)
                     (sort-by #(-> % :report-date date/german->iso))
-                    reverse
-                    (take-while #(not= newest-link (:report-overview-uri %)))
-                    reverse)))
+                    (reports-not-on-masto newest-links-on-masto))))
+      (.then #(take 2 %))
       (.then beu/fetch-reports-details+)
       (.then #(js/Promise.all (map pdf/add-interesting-pages-with-screenshots+ %)))
       (.then #(->> %
