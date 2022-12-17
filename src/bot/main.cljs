@@ -3,7 +3,8 @@
    [bot.beu :as beu]
    [bot.date :as date]
    [bot.mastodon :as mastodon]
-   [bot.pdf :as pdf]))
+   [bot.pdf :as pdf]
+   [clojure.string :as string]))
 
 (def visibility (or (-> js/process .-env .-VISIBILITY)
                     "unlisted"))
@@ -49,9 +50,12 @@
       (.then #(take 2 %))
       (.then beu/fetch-reports-details+)
       (.then #(js/Promise.all (map pdf/add-interesting-pages-with-screenshots+ %)))
-      (.then #(->> %
-                   (map report->status)
-                   (map mastodon/post-status+)
-                   js/Promise.all))
+      (.then #(map report->status %))
+      (.then (fn [statuses]
+               (if (empty? statuses)
+                 (println "No new reports")
+                 (println (str "Will publish " (count statuses) " toot(s):\n" (->> statuses (map :status) (string/join "\n\n")))))
+               statuses))
+      (.then #(js/Promise.all (map mastodon/post-status+ %)))
       (.catch (fn [cause]
                 (println (ex-message cause))))))
