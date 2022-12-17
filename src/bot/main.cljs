@@ -17,7 +17,9 @@
                     first)))))
 
 (defn report->status [{:keys [report-type event-type event-date event-location report-overview-uri interesting-pages]}]
-  {:status (str report-type " über " event-type " am " event-date " in " event-location "\n" report-overview-uri)
+  {:status (str report-type " über " event-type " am " event-date " in " event-location "\n"
+                report-overview-uri "\n"
+                "#" event-type " #BahnBubble #ZugBubble #BEU #Unfall #" report-type)
    :visibility visibility
    :language "de"
    :media_ids (->> interesting-pages
