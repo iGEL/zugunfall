@@ -10,14 +10,14 @@
                     "unlisted"))
 
 (defn newest-links-on-masto+ []
-  (-> (mastodon/get-statuses+)
-      (.then (fn [statuses]
-               (->> statuses
-                    (map mastodon/status-first-link)
+  (-> (mastodon/get-toots+)
+      (.then (fn [toots]
+               (->> toots
+                    (map mastodon/toot-first-link)
                     (filter identity)
                     set)))))
 
-(defn report->status [{:keys [report-type event-type event-date event-location report-overview-uri interesting-pages]}]
+(defn report->toot [{:keys [report-type event-type event-date event-location report-overview-uri interesting-pages]}]
   {:status (str report-type " über " event-type " am " event-date " in " event-location "\n"
                 report-overview-uri "\n"
                 "#" event-type " #BahnBubble #ZugBubble #BEU #Unfall #" report-type)
@@ -50,12 +50,12 @@
       (.then #(take 2 %))
       (.then beu/fetch-reports-details+)
       (.then #(js/Promise.all (map pdf/add-interesting-pages-with-screenshots+ %)))
-      (.then #(map report->status %))
-      (.then (fn [statuses]
-               (if (empty? statuses)
+      (.then #(map report->toot %))
+      (.then (fn [toots]
+               (if (empty? toots)
                  (println "No new reports")
-                 (println (str "Will publish " (count statuses) " toot(s):\n" (->> statuses (map :status) (string/join "\n\n")))))
-               statuses))
-      (.then #(js/Promise.all (map mastodon/post-status+ %)))
+                 (println (str "Will publish " (count toots) " toot(s):\n" (->> toots (map :status) (string/join "\n\n")))))
+               toots))
+      (.then #(js/Promise.all (map mastodon/publish-toot+ %)))
       (.catch (fn [cause]
                 (println (ex-message cause))))))

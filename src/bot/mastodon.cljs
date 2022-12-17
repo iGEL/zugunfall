@@ -41,24 +41,24 @@
      (-> (account+)
          (.then #(-> % :body :id))))))
 
-(defn get-statuses+ []
+(defn get-toots+ []
   (-> (account-id+)
       (.then (fn [account-id]
                (get+ (str "/api/v1/accounts/" account-id "/statuses"))))
       (.then #(:body %))))
 
-(defn status-content [{:keys [text-only]} {:keys [content]}]
+(defn toot-content [{:keys [text-only]} {:keys [content]}]
   (if text-only
     (-> content
         (string/replace #"<br />" "\n")
         (string/replace #"<[^>]+>" ""))
     content))
 
-(defn status-first-link [status]
-  (re-find #"https?://[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9]{1,}/[-a-zA-Z0-9()@:%_+.~#?&/=]*" (status-content {:text-only true} status)))
+(defn toot-first-link [toot]
+  (re-find #"https?://[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9]{1,}/[-a-zA-Z0-9()@:%_+.~#?&/=]*" (toot-content {:text-only true} toot)))
 
-(defn post-status+ [status]
-  (post+ "/api/v1/statuses" status))
+(defn publish-toot+ [toot]
+  (post+ "/api/v1/statuses" toot))
 
 (defn shortened-description [description]
   (let [bytes (.encode (js/TextEncoder.) description)]
