@@ -73,9 +73,9 @@
                         [{:name "description" :value (shortened-description description)}
                          {:name "file" :file path :content-type content-type}]
                         {:headers {:authorization (str "Bearer " access-token)}})
-      (.then (fn [{:keys [status], {:keys [x-ratelimit-reset]} :headers, :as response}]
+      (.then (fn [{:keys [status headers], :as response}]
                (if (= 429 status)
-                 (let [wait-time (- (js/Date.parse x-ratelimit-reset)
+                 (let [wait-time (- (js/Date.parse (-> headers :x-ratelimit-reset first))
                                     (js/Date.now)
                                     -1000)]
                    (println (str "Got 429 Too Many Requests. Retrying in " wait-time "ms"))
