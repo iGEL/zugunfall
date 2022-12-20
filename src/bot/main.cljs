@@ -6,6 +6,8 @@
    [bot.pdf :as pdf]
    [clojure.string :as string]))
 
+(def env (or (-> js/process .-env .-ENV)
+             "dev"))
 (def visibility (or (-> js/process .-env .-VISIBILITY)
                     "unlisted"))
 
@@ -56,6 +58,8 @@
                  (println "No new reports")
                  (println (str "Will publish " (count toots) " toot(s):\n" (->> toots (map :status) (string/join "\n\n")))))
                toots))
-      (.then #(js/Promise.all (map mastodon/publish-toot+ %)))
+      (.then #(if (= env "prod")
+                (js/Promise.all (map mastodon/publish-toot+ %))
+                (println (str "ENV is " env ", not prod. Publishing toots is disabled."))))
       (.catch (fn [cause]
                 (println (ex-message cause))))))

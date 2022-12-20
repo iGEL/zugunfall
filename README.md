@@ -19,9 +19,16 @@ It is written in [ClojureScript](https://clojurescript.org/).
    [this guide](https://docs.joinmastodon.org/client/token/).
    Scopes should be `read write:statuses write:media`
 3. Run `yarn build`
-4. Run `INSTANCE_BASE_URI=<instance-base-uri> ACCESS_TOKEN=<access-token> node target/app.js`  
-   The `INSTANCE_BASE_URI` is the base URI of the instance including the protocol,
-	 eg. `https://botsin.space`
+4. Run `INSTANCE_BASE_URI=<instance-base-uri> ACCESS_TOKEN=<access-token> node target/app.js`
+
+## Configuration
+
+The bot can be configured by environment variables:
+
+* `INSTANCE_BASE_URI` This is the base URI of the instance including the protocol, eg. `https://botsin.space`
+* `ACCESS_TOKEN` The access token for using the Mastodon API
+* `VISIBILITY` The visibility of toots to publish, see [Mastodon API docs](https://docs.joinmastodon.org/methods/statuses/#form-data-parameters). Defaults to `unlisted`.
+* `ENV` Unless this is set to `prod`, toots will actually not be published. Defaults to `dev`.
 
 ## License
 
