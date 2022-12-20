@@ -41,11 +41,26 @@
      (-> (account+)
          (.then #(-> % :body :id))))))
 
+(defn get-toots-page+ [{:keys [account-id prev max-pages]}]
+  (-> (let [path (str "/api/v1/accounts/"
+                      account-id
+                      "/statuses?limit=40"
+                      (when-not (empty? prev)
+                        (str "&max_id=" (-> prev last :id))))]
+        (get+ path))
+      (.then (fn [{:keys [body]}]
+               (if (or (empty? body)
+                       (<= max-pages 1))
+                 (concat prev body)
+                 (get-toots-page+ {:account-id account-id
+                                   :prev (concat prev body)
+                                   :max-pages (dec max-pages)}))))))
+
 (defn get-toots+ []
   (-> (account-id+)
       (.then (fn [account-id]
-               (get+ (str "/api/v1/accounts/" account-id "/statuses"))))
-      (.then #(:body %))))
+               (get-toots-page+ {:account-id account-id
+                                 :max-pages 10})))))
 
 (defn toot-content [{:keys [text-only]} {:keys [content]}]
   (if text-only
