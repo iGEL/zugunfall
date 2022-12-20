@@ -1,5 +1,6 @@
 ## Zugunfall
 
+🇩🇪  
 Dies ist der Mastodon-Bot, der [@zugunfall@botsin.space](https://botsin.space/@zugunfall) betreibt.
 Er sucht die Berichte der [Bundesstelle für Eisenbahnunfalluntersuchung](https://www.eisenbahn-unfalluntersuchung.de) zusammen und publiziert sie auf Mastodon.
 Er ist in [ClojureScript](https://clojurescript.org/) geschrieben.
@@ -11,6 +12,7 @@ Der Bot verwendet
 
 **Bitte den Code verwenden, um zu Twitter zu posten!**
 
+🇺🇸  
 This is the Mastodon bot running [@zugunfall@botsin.space](https://botsin.space/@zugunfall).
 It is collecting the reports of the German [Federal Authority for Railway Accident Investigation](https://www.eisenbahn-unfalluntersuchung.de) and publishing the results to Mastodon.
 It is written in [ClojureScript](https://clojurescript.org/).
