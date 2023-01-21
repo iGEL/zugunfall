@@ -11,7 +11,7 @@ Der Bot verwendet
 * Basisinformationen, Text-Inhalte und Screenshots der PDFs werden mit [Poppler](https://poppler.freedesktop.org/) ausgelesen/generiert.
 * Die Verwendung von [Promises](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) zieht sich durch den Code. Die Funktionen, die ein Promise zurückgeben, sind mit einem `+` am Ende benannt.
 
-**Bitte den Code verwenden, um zu Twitter zu posten!**
+**Bitte nicht den Code verwenden, um zu Twitter zu posten!**
 
 🇺🇸  
 This is the Mastodon bot running [@zugunfall@botsin.space](https://botsin.space/@zugunfall).
