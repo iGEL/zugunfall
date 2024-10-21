@@ -26,14 +26,16 @@ The bot uses
 
 **Please do not use this code to post to Twitter!**
 
-## Setup & running it
+## Setup
 
-1. Install [Node.js](https://nodejs.org) & [yarn](https://yarnpkg.com/)
-2. Create a mastodon application and obtain the access token following the instructions of
-   [this guide](https://docs.joinmastodon.org/client/token/).
-   Scopes should be `read write:statuses write:media`
-3. Run `yarn build`
-4. Run `INSTANCE_BASE_URI=<instance-base-uri> ACCESS_TOKEN=<access-token> node target/app.js`
+1. Install [docker](https://docs.docker.com/engine/install/)
+2. Create the docker image `docker build -t zugunfall .`
+4. Create the docker container
+   `docker create -e INSTANCE_BASE_URI=<instance-base-uri> -e ACCESS_TOKEN=<access-token> -e VISIBILITY=<visibility> -e ENV=<env> -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall`
+
+## Running it
+
+Run `docker start zugunfall`
 
 ## Configuration
 
@@ -46,7 +48,7 @@ The bot can be configured by environment variables:
 
 ## License
 
-Copyright 2022 Johannes Barre
+Copyright 2022-24 Johannes Barre
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
