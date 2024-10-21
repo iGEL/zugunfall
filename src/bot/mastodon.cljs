@@ -1,6 +1,7 @@
 (ns bot.mastodon
   (:require
    [bot.http :as http]
+   [bot.log :refer [log]]
    [clojure.string :as string]))
 
 (def instance-base-uri (-> js/process .-env .-INSTANCE_BASE_URI))
@@ -93,7 +94,7 @@
                  (let [wait-time (- (js/Date.parse (-> headers :x-ratelimit-reset first))
                                     (js/Date.now)
                                     -1000)]
-                   (println (str "Got 429 Too Many Requests. Retrying in " wait-time "ms"))
+                   (log (str "Got 429 Too Many Requests. Retrying in " wait-time "ms"))
                    (-> (js/Promise. (fn [resolve]
                                       (js/setTimeout resolve wait-time)))
                        (.then (partial upload-media+ info))))

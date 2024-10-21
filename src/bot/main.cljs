@@ -2,6 +2,7 @@
   (:require
    [bot.beu :as beu]
    [bot.date :as date]
+   [bot.log :refer [log]]
    [bot.mastodon :as mastodon]
    [bot.pdf :as pdf]
    [clojure.string :as string]))
@@ -55,11 +56,11 @@
       (.then #(map report->toot %))
       (.then (fn [toots]
                (if (empty? toots)
-                 (println "No new reports")
-                 (println (str "Will publish " (count toots) " toot(s):\n" (->> toots (map :status) (string/join "\n\n")))))
+                 (log "No new reports")
+                 (log (str "Will publish " (count toots) " toot(s):\n" (->> toots (map :status) (string/join "\n\n")))))
                toots))
       (.then #(if (= env "prod")
                 (js/Promise.all (map mastodon/publish-toot+ %))
-                (println (str "ENV is " env ", not prod. Publishing toots is disabled."))))
+                (log (str "ENV is " env ", not prod. Publishing toots is disabled."))))
       (.catch (fn [cause]
-                (println (ex-message cause))))))
+                (log (ex-message cause))))))
