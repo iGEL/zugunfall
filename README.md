@@ -46,6 +46,37 @@ The bot can be configured by environment variables:
 * `VISIBILITY` The visibility of toots to publish, see [Mastodon API docs](https://docs.joinmastodon.org/methods/statuses/#form-data-parameters). Defaults to `unlisted`.
 * `ENV` Unless this is set to `prod`, toots will actually not be published. Defaults to `dev`.
 
+## Creating the API application & retrieving the access token
+
+First, you need to create an API application. It's just a record in the database of the Mastodon instance:
+
+```sh
+curl -X POST \
+        -F 'client_name=Zugunfall' \
+        -F 'redirect_uris=urn:ietf:wg:oauth:2.0:oob' \
+        -F 'scopes=read write:statuses write:media' \
+        -F 'website=https://github.com/iGEL/zugunfall' \
+        https://mastodon.example/api/v1/apps
+```
+
+You'll receive a `client_id` and a `client_secret`. Store them in a secure place.
+
+Open `https://mastodon.example/oauth/authorize?client_id=CLIENT_ID&scope=read+write:statuses+write:media&redirect_uri=urn:ietf:wg:oauth:2.0:oob&response_type=code` in your browser.
+
+Finally, you can get an access token with this:
+```sh
+curl -X POST \
+	-F 'client_id=your_client_id_here' \
+	-F 'client_secret=your_client_secret_here' \
+	-F 'redirect_uri=urn:ietf:wg:oauth:2.0:oob' \
+	-F 'grant_type=authorization_code' \
+	-F 'code=user_authzcode_here' \
+	-F 'scope=read write:statuses write:media' \
+	https://mastodon.example/oauth/token
+```
+
+Store the `access_token` in the secure place. You also need it to run the bot.
+
 ## License
 
 Copyright 2022-24 Johannes Barre
