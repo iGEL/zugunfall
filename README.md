@@ -31,7 +31,7 @@ The bot uses
 1. Install [docker](https://docs.docker.com/engine/install/)
 2. Create the docker image `docker build -t zugunfall .`
 4. Create the docker container
-   `docker create -e INSTANCE_BASE_URI=<instance-base-uri> -e ACCESS_TOKEN=<access-token> -e VISIBILITY=<visibility> -e ENV=<env> -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall`
+   ``docker create -e INSTANCE_BASE_URI=<instance-base-uri> -e ACCESS_TOKEN=<access-token> -e VISIBILITY=<visibility> -e ENV=<env> -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
 
 ## Running it
 
