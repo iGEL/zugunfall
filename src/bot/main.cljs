@@ -12,44 +12,47 @@
 (def visibility (or (-> js/process .-env .-VISIBILITY)
                     "unlisted"))
 
-(defn newest-links-on-masto+ []
+(defn newest-report-ids-on-masto+ []
   (-> (mastodon/get-toots+)
       (.then (fn [toots]
                (->> toots
-                    (map mastodon/toot-first-link)
+                    (map mastodon/report-id)
                     (filter identity)
                     set)))))
 
-(defn report->toot [{:keys [report-type event-type event-date event-location report-overview-uri interesting-pages]}]
+(defn report->toot [{:keys [report-type event-type event-date event-location report-overview-uri interesting-pages report-id]}]
   {:status (str report-type " über " event-type " am " event-date " in " event-location "\n"
                 report-overview-uri "\n"
-                "#" event-type " #BahnBubble #ZugBubble #BEU #Unfall #" report-type)
+                "#" event-type " #BahnBubble #ZugBubble #BEU #Unfall #" report-type " " report-id)
    :visibility visibility
    :language "de"
    :media_ids (->> interesting-pages
                    (map :media-id)
                    (filter identity))})
 
-(defn reports-not-on-masto [newest-links-on-masto reports]
-  (-> (reduce (fn [{:keys [newest-links-on-masto] :as prev} {:keys [report-overview-uri] :as report}]
-                (if (or (contains? newest-links-on-masto report-overview-uri)
-                        (empty? newest-links-on-masto))
-                  (update prev :newest-links-on-masto disj report-overview-uri)
+(defn reports-not-on-masto [newest-ids-on-masto reports]
+  (-> (reduce (fn [{:keys [newest-ids-on-masto] :as prev} {:keys [report-id] :as report}]
+                (if (or (contains? newest-ids-on-masto report-id)
+                        (empty? newest-ids-on-masto))
+                  (update prev :newest-ids-on-masto disj report-id)
                   (update prev :reports-not-on-masto conj report)))
-              {:newest-links-on-masto newest-links-on-masto
+              {:newest-ids-on-masto newest-ids-on-masto
                :reports-not-on-masto []}
               (reverse reports))
       :reports-not-on-masto
       reverse))
 
 (defn main []
-  (-> (js/Promise.all [(newest-links-on-masto+)
+  (-> (js/Promise.all [(newest-report-ids-on-masto+)
                        (beu/fetch-reports+ "Untersuchungsbericht")
                        (beu/fetch-reports+ "Zwischenbericht")])
-      (.then (fn [[newest-links-on-masto final-reports intermediate-reports]]
+      (.then (fn [[newest-ids-on-masto final-reports intermediate-reports]]
                (->> (concat final-reports intermediate-reports)
                     (sort-by #(-> % :report-date date/german->iso))
-                    (reports-not-on-masto newest-links-on-masto))))
+                    (reports-not-on-masto newest-ids-on-masto))))
+      (.then (fn [reports]
+               (filter #(pos? (compare (-> % :report-date date/german->iso) "2025-01-01"))
+                       reports)))
       (.then #(take 2 %))
       (.then beu/fetch-reports-details+)
       (.then #(js/Promise.all (map pdf/add-interesting-pages-with-screenshots+ %)))

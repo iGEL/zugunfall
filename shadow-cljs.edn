@@ -5,6 +5,7 @@
 
  :builds {:app {:target :esm
                 :js-options {:keep-as-import #{"child_process"
+                                               "crypto"
                                                "fs/promises"
                                                "node-fetch"}}
                 :modules {:app {:init-fn bot.main/main}}

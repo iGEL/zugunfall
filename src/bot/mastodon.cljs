@@ -70,8 +70,8 @@
         (string/replace #"<[^>]+>" ""))
     content))
 
-(defn toot-first-link [toot]
-  (re-find #"https?://[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9]{1,}/[-a-zA-Z0-9()@:%_+.~#?&/=]*" (toot-content {:text-only true} toot)))
+(defn report-id [toot]
+  (re-find #"\[id:[a-zA-Z0-9-_]{10}\]" (toot-content {:text-only true} toot)))
 
 (defn publish-toot+ [toot]
   (post+ "/api/v1/statuses" toot))

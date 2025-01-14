@@ -2,6 +2,7 @@
   (:require
    ["node-html-parser" :refer [parse]]
    [bot.http :as http]
+   [bot.sha1 :as sha1]
    [clojure.string :as str]))
 
 (def report-type-uri {"Untersuchungsbericht" "https://www.eisenbahn-unfalluntersuchung.de/SiteGlobals/Forms/Suche/Untersuchungsberichtesuche/Untersuchungsberichtesuche_Formular.html?sortOrder=dateOfIssue_dt+desc"
@@ -22,29 +23,40 @@
   (let [fragments (-> body
                       parse
                       (.querySelectorAll ".searchresult .row"))]
-    (map (fn [fragment]
-           {:report-type (str/trim report-type)
-            :report-date (->> (-> fragment (.querySelector "p") .-text)
-                              (re-find #"Publikation vom: (.+)")
-                              last
-                              str/trim)
-            :report-overview-uri (->> fragment
-                                      (extract-uri "a")
+    (->> fragments
+         (map (fn [fragment]
+                {:report-type (str/trim report-type)
+                 :report-date (->> (-> fragment (.querySelector "p") .-text)
+                                   (re-find #"Publikation vom: (.+)")
+                                   last
+                                   str/trim)
+                 :report-overview-uri (->> fragment
+                                           (extract-uri "a")
+                                           str/trim)
+                 :report-pdf-uri (->> fragment
+                                      (extract-uri "a.downloadLink")
                                       str/trim)
-            :report-pdf-uri (->> fragment
-                                 (extract-uri "a.downloadLink")
-                                 str/trim)
-            :event-location (-> fragment
-                                (.querySelector "a")
-                                .-firstChild
-                                .-text
-                                str/trim)
-            :event-type (-> fragment
-                            (.querySelectorAll "p")
-                            last
-                            .-text
-                            str/trim)})
-         fragments)))
+                 :event-location (-> fragment
+                                     (.querySelector "a")
+                                     .-firstChild
+                                     .-text
+                                     str/trim)
+                 :event-type (-> fragment
+                                 (.querySelectorAll "p")
+                                 last
+                                 .-text
+                                 str/trim)}))
+         (map (fn [report]
+                (let [report-id (str
+                                 "[id:"
+                                 (subs
+                                  (->> (select-keys report [:report-type :report-date :event-location :event-type])
+                                       (sort-by (fn [[k _]] k))
+                                       pr-str
+                                       sha1/sha1-sum)
+                                  0 10)
+                                 "]")]
+                  (assoc report :report-id report-id)))))))
 
 (defn has-report-details? [report]
   (contains? #{"Untersuchungsbericht" "Zwischenbericht"}
