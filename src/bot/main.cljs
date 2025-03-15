@@ -1,6 +1,7 @@
 (ns bot.main
   (:require
    [bot.beu :as beu]
+   [bot.bsky :as bsky]
    [bot.date :as date]
    [bot.log :refer [log]]
    [bot.mastodon :as mastodon]
@@ -9,8 +10,6 @@
 
 (def env (or (-> js/process .-env .-ENV)
              "dev"))
-(def visibility (or (-> js/process .-env .-VISIBILITY)
-                    "unlisted"))
 
 (defn newest-report-ids-on-masto+ []
   (-> (mastodon/get-toots+)
@@ -20,50 +19,75 @@
                     (filter identity)
                     set)))))
 
-(defn report->toot [{:keys [report-type event-type event-date event-location report-overview-uri interesting-pages report-id]}]
-  {:status (str report-type " über " event-type " am " event-date " in " event-location "\n"
-                report-overview-uri "\n"
-                "#" event-type " #BahnBubble #ZugBubble #BEU #Unfall #" report-type " " report-id)
-   :visibility visibility
-   :language "de"
-   :media_ids (->> interesting-pages
-                   (map :media-id)
-                   (filter identity))})
+(defn newest-report-ids-on-bsky+ []
+  (-> (bsky/get-posts+)
+      (.then (fn [posts]
+               (->> posts
+                    (map bsky/report-id)
+                    (filter identity)
+                    set)))))
 
-(defn reports-not-on-masto [newest-ids-on-masto reports]
-  (-> (reduce (fn [{:keys [newest-ids-on-masto] :as prev} {:keys [report-id] :as report}]
-                (if (or (contains? newest-ids-on-masto report-id)
-                        (empty? newest-ids-on-masto))
-                  (update prev :newest-ids-on-masto disj report-id)
-                  (update prev :reports-not-on-masto conj report)))
-              {:newest-ids-on-masto newest-ids-on-masto
-               :reports-not-on-masto []}
-              (reverse reports))
-      :reports-not-on-masto
-      reverse))
+(defn capitalized-tag [tag]
+  (->> (string/split tag #" ")
+       (map string/capitalize)
+       (string/join)))
 
-(defn main []
+(defn add-post [{:keys [report-type event-type event-date event-location
+                        report-overview-uri]
+                 :as report}]
+  (assoc report :post
+         {:title (str report-type " über " event-type " am " event-date " in " event-location)
+          :uri report-overview-uri
+          :tags [(capitalized-tag event-type)
+                 "BahnBubble"
+                 "ZugBubble"
+                 "BEU"
+                 "Unfall"
+                 (capitalized-tag report-type)]}))
+
+(defn oldest-reports-to-post [[newest-ids-on-masto newest-ids-on-bsky final-reports intermediate-reports]]
+  (->> (concat final-reports intermediate-reports)
+       (sort-by #(-> % :report-date date/german->iso))
+       (reduce (fn [prev {:keys [report-id] :as report}]
+                 (let [post-to-masto? (-> newest-ids-on-masto (contains? report-id) not)
+                       post-to-bsky? (-> newest-ids-on-bsky (contains? report-id) not)]
+                   (if (or post-to-masto? post-to-bsky?)
+                     (conj prev (assoc report
+                                       :post-to-masto? post-to-masto?
+                                       :post-to-bsky? post-to-bsky?))
+                     prev)))
+               [])))
+
+(defn ^:export main []
   (-> (js/Promise.all [(newest-report-ids-on-masto+)
+                       (newest-report-ids-on-bsky+)
                        (beu/fetch-reports+ "Untersuchungsbericht")
                        (beu/fetch-reports+ "Zwischenbericht")])
-      (.then (fn [[newest-ids-on-masto final-reports intermediate-reports]]
-               (->> (concat final-reports intermediate-reports)
-                    (sort-by #(-> % :report-date date/german->iso))
-                    (reports-not-on-masto newest-ids-on-masto))))
+      (.then oldest-reports-to-post)
       (.then (fn [reports]
                (filter #(pos? (compare (-> % :report-date date/german->iso) "2025-01-01"))
                        reports)))
       (.then #(take 2 %))
       (.then beu/fetch-reports-details+)
       (.then #(js/Promise.all (map pdf/add-interesting-pages-with-screenshots+ %)))
-      (.then #(map report->toot %))
-      (.then (fn [toots]
-               (if (empty? toots)
+      (.then #(map add-post %))
+      (.then (fn [reports]
+               (if (empty? reports)
                  (log "No new reports")
-                 (log (str "Will publish " (count toots) " toot(s):\n" (->> toots (map :status) (string/join "\n\n")))))
-               toots))
-      (.then #(if (= env "prod")
-                (js/Promise.all (map mastodon/publish-toot+ %))
-                (log (str "ENV is " env ", not prod. Publishing toots is disabled."))))
+                 (let [masto-posts (->> reports (filter :post-to-masto?) seq)
+                       bsky-posts (->> reports (filter :post-to-bsky?) seq)]
+                   (log (string/join "\n"
+                                     (cond-> []
+                                       masto-posts
+                                       (conj (str "Will publish " (count masto-posts) " toot(s) to Mastodon:\n"
+                                                  (->> masto-posts (map :post-text) (string/join "\n\n"))))
+
+                                       bsky-posts
+                                       (conj (str "Will publish " (count bsky-posts) " post(s) to Bsky:\n"
+                                                  (->> bsky-posts (map :post-text) (string/join "\n\n")))))))
+                   (if (= env "prod")
+                     (js/Promise.all (concat (map mastodon/publish-toot+ masto-posts)
+                                             (map bsky/publish-post+ bsky-posts)))
+                     (log (str "ENV is " env ", not prod. Publishing post is disabled.")))))))
       (.catch (fn [cause]
                 (log (ex-message cause))))))

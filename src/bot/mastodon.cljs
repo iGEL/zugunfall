@@ -4,8 +4,10 @@
    [bot.log :refer [log]]
    [clojure.string :as string]))
 
-(def instance-base-uri (-> js/process .-env .-INSTANCE_BASE_URI))
-(def access-token (-> js/process .-env .-ACCESS_TOKEN))
+(def instance-base-uri (-> js/process .-env .-MASTO_BASE_URI))
+(def access-token (-> js/process .-env .-MASTO_ACCESS_TOKEN))
+(def visibility (or (-> js/process .-env .-MASTO_VISIBILITY)
+                    "unlisted"))
 (def description-max-length 1000)
 
 (defn get+
@@ -73,9 +75,6 @@
 (defn report-id [toot]
   (re-find #"\[id:[a-zA-Z0-9-_]{10}\]" (toot-content {:text-only true} toot)))
 
-(defn publish-toot+ [toot]
-  (post+ "/api/v1/statuses" toot))
-
 (defn shortened-description [description]
   (let [bytes (.encode (js/TextEncoder.) description)]
     (if (>= (.-length bytes) description-max-length)
@@ -84,7 +83,7 @@
         (str (.replace tdn #"\uFFFD" "") "…"))
       description)))
 
-(defn upload-media+ [{:keys [path description content-type] :as info}]
+(defn upload-media+ [{:keys [path description content-type] :as report}]
   (-> (multi-part-post+ "/api/v2/media"
                         [{:name "description" :value (shortened-description description)}
                          {:name "file" :file path :content-type content-type}]
@@ -97,6 +96,36 @@
                    (log (str "Got 429 Too Many Requests. Retrying in " wait-time "ms"))
                    (-> (js/Promise. (fn [resolve]
                                       (js/setTimeout resolve wait-time)))
-                       (.then (partial upload-media+ info))))
+                       (.then (partial upload-media+ report))))
                  response)))
       (.then http/ensure-ok+)))
+
+(defn upload-screenshots+ [{:keys [interesting-pages] :as report}]
+  (-> (js/Promise.all (map (fn [{:keys [text image-path]}]
+                             (upload-media+ {:path image-path
+                                             :description text
+                                             :content-type "image/png"}))
+                           interesting-pages))
+      (.then (fn [responses]
+               (assoc report
+                      :interesting-pages
+                      (map-indexed (fn [idx response]
+                                     (assoc (get interesting-pages idx)
+                                            :media-id
+                                            (-> response :body :id)))
+                                   responses))))))
+
+(defn report->toot [{:keys [interesting-pages report-id]
+                     {:keys [title uri tags]} :post}]
+  {:status (str title "\n" uri "\n" (string/join " " (map #(str "#" %) tags)) " " report-id)
+   :visibility visibility
+   :language "de"
+   :media_ids (->> interesting-pages
+                   (map :media-id)
+                   (filter identity))})
+
+(defn publish-toot+ [report]
+  (-> (upload-screenshots+ report)
+      (.then report->toot)
+      (.then (fn [toot]
+               (post+ "/api/v1/statuses" toot)))))
