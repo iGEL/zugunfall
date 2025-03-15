@@ -106,11 +106,16 @@
        (.encode (js/TextEncoder.))
        .-length))
 
-(defn report->post [{:keys [interesting-pages report-id]
-                     {:keys [title uri tags]} :post}]
+(defn post-text [{:keys [report-id]
+                  {:keys [title tags]} :post}]
+  (str title "\n" (str/join " " (map #(str "#" %) tags)) " " report-id))
+
+(defn report->post [{:keys [interesting-pages]
+                     {:keys [title uri tags]} :post
+                     :as report}]
   (-> (get-access-token+)
       (.then (fn [{:keys [handle]}]
-               (let [text (str title "\n" (str/join " " (map #(str "#" %) tags)) " " report-id)
+               (let [text (post-text report)
                      facets (reduce
                              (fn [prev tag]
                                (let [byte-start (-> prev last :index :byteEnd inc)]

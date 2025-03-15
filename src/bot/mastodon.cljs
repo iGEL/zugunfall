@@ -115,9 +115,13 @@
                                             (-> response :body :id)))
                                    responses))))))
 
-(defn report->toot [{:keys [interesting-pages report-id]
-                     {:keys [title uri tags]} :post}]
-  {:status (str title "\n" uri "\n" (string/join " " (map #(str "#" %) tags)) " " report-id)
+(defn toot-text [{:keys [report-id]
+                  {:keys [title uri tags]} :post}]
+  (str title "\n" uri "\n" (string/join " " (map #(str "#" %) tags)) " " report-id))
+
+(defn report->toot [{:keys [interesting-pages]
+                     :as report}]
+  {:status (toot-text report)
    :visibility visibility
    :language "de"
    :media_ids (->> interesting-pages

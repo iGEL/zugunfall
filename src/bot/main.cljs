@@ -74,15 +74,13 @@
                  (log "No new reports")
                  (let [masto-posts (->> reports (filter :post-to-masto?) seq)
                        bsky-posts (->> reports (filter :post-to-bsky?) seq)]
-                   (log (string/join "\n"
-                                     (cond-> []
-                                       masto-posts
-                                       (conj (str "Will publish " (count masto-posts) " toot(s) to Mastodon:\n"
-                                                  (->> masto-posts (map :post-text) (string/join "\n\n"))))
+                   (when masto-posts
+                     (log (str "Will publish " (count masto-posts) " toot(s) to Mastodon:\n"
+                               (->> masto-posts (map mastodon/toot-text) (string/join "\n\n")))))
 
-                                       bsky-posts
-                                       (conj (str "Will publish " (count bsky-posts) " post(s) to Bsky:\n"
-                                                  (->> bsky-posts (map :post-text) (string/join "\n\n")))))))
+                   (when bsky-posts
+                     (log (str "Will publish " (count bsky-posts) " post(s) to Bsky:\n"
+                               (->> bsky-posts (map bsky/post-text) (string/join "\n\n")))))
                    (if (= env "prod")
                      (js/Promise.all (concat (map mastodon/publish-toot+ masto-posts)
                                              (map bsky/publish-post+ bsky-posts)))
