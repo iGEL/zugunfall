@@ -49,7 +49,8 @@
   (->> (concat final-reports intermediate-reports)
        (sort-by #(-> % :report-date date/german->iso))
        (reduce (fn [prev {:keys [report-id] :as report}]
-                 (let [post-to-masto? (-> newest-ids-on-masto (contains? report-id) not)
+                 (let [post-to-masto? (and (-> newest-ids-on-masto (contains? report-id) not)
+                                           (pos? (compare (-> report :report-date date/german->iso) "2025-01-01")))
                        post-to-bsky? (-> newest-ids-on-bsky (contains? report-id) not)]
                    (if (or post-to-masto? post-to-bsky?)
                      (conj prev (assoc report
@@ -64,9 +65,6 @@
                        (beu/fetch-reports+ "Untersuchungsbericht")
                        (beu/fetch-reports+ "Zwischenbericht")])
       (.then oldest-reports-to-post)
-      (.then (fn [reports]
-               (filter #(pos? (compare (-> % :report-date date/german->iso) "2025-01-01"))
-                       reports)))
       (.then #(take 2 %))
       (.then beu/fetch-reports-details+)
       (.then #(js/Promise.all (map pdf/add-interesting-pages-with-screenshots+ %)))
