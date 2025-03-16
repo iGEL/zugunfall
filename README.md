@@ -30,18 +30,14 @@ The bot uses
 
 1. Install [docker](https://docs.docker.com/engine/install/)
 2. Create the docker image `docker build -t zugunfall .`
-3. Retrieve the Mastodon access token and the Bluesky refresh token (see below) if you don't have them already
+3. Retrieve the [Mastodon access token](#creating-the-mastodon-api-application--retrieving-the-access-token) (to be passed as `MASTO_ACCESS_TOKEN` env var)
+   and the [Bluesky refresh token](#retrieving-the-bluesky-refresh-token) (to be stored in `bsky.token`) if you don't have them already
 4. Create the docker container
    ``docker create -e BSKY_BASE_URI=<base-uri> -e MASTO_BASE_URI=<base-uri> -e MASTO_ACCESS_TOKEN=<access-token> -e MASTO_VISIBILITY=<visibility> -e ENV=<env> -v `pwd`/bsky.token:/zugunfall/bsky.token -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
 
 ## Running it
 
 Run `docker start zugunfall`
-
-*Note*: If the bot can't find any links to the beu in the feed, it assumes a failure and doesn't post anything.
-Manually create a post with this link for example:
-`https://www.eisenbahn-unfalluntersuchung.de/SharedDocs/Downloads/BEU/Untersuchungsberichte/2020/221_Bietigheim-Bissingen.html`.
-You can delete it after the bot has posted it's first report. It will only post 2 reports at most, so you have to run it a few times until it caught up with the reports.
 
 ## Configuration
 
