@@ -6,12 +6,14 @@
    [clojure.string :as str]))
 
 (def base-uri (-> js/process .-env .-BSKY_BASE_URI))
+(def token-file (or (-> js/process .-env .-BSKY_TOKEN_FILE)
+                    "bsky.token"))
 
 (def get-access-token+
   (memoize
    (fn []
      (log "Refreshing bsky access token")
-     (-> (fs/readFile "bsky.token" "utf-8")
+     (-> (fs/readFile token-file "utf-8")
          (.then str/trim)
          (.then (fn [refresh-token]
                   (http/post+ (str base-uri "/xrpc/com.atproto.server.refreshSession")
@@ -26,7 +28,7 @@
                    :refresh-token refresh-token
                    :handle handle}))
          (.then (fn [{:keys [refresh-token] :as info}]
-                  (-> (fs/writeFile "bsky.token" refresh-token)
+                  (-> (fs/writeFile token-file refresh-token)
                       (.then (constantly (dissoc info :refresh-token))))))
          (.catch (fn [error]
                    (js/console.error error)

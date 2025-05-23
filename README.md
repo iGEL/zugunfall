@@ -44,6 +44,7 @@ Run `docker start zugunfall`
 The bot can be configured by environment variables:
 
 * `BSKY_BASE_URI` This is the base URI of the Bluesky instance including the protocol, eg. `https://bsky.social`
+* `BSKY_TOKEN_FILE` Name of the token file to use, defaults to `bsky.token`
 * `MASTO_BASE_URI` This is the base URI of the Mastodon instance including the protocol, eg. `https://zug.network`
 * `MASTO_ACCESS_TOKEN` The access token for using the Mastodon API
 * `MASTO_VISIBILITY` The visibility of toots to publish, see [Mastodon API docs](https://docs.joinmastodon.org/methods/statuses/#form-data-parameters). Defaults to `unlisted`, you might want `public`.
