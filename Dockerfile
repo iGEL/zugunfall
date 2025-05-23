@@ -1,6 +1,6 @@
 FROM node
 
-ENV CLOJURE_VERSION=1.12.0.1479
+ENV CLOJURE_VERSION=1.12.0.1530
 ENV APP_DIR=/zugunfall
 
 RUN apt-get update \
