@@ -6,7 +6,8 @@
    [bot.log :refer [log]]
    [clojure.string :as str]))
 
-(def base-uri (-> js/process .-env .-BSKY_BASE_URI))
+(def base-uri (or (-> js/process .-env .-BSKY_BASE_URI)
+                  "https://bsky.social"))
 (def token-file (or (-> js/process .-env .-BSKY_TOKEN_FILE)
                     "bsky.token"))
 

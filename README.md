@@ -32,8 +32,9 @@ The bot uses
 2. Create the docker image `docker build -t zugunfall .`
 3. Retrieve the [Mastodon access token](#creating-the-mastodon-api-application--retrieving-the-access-token) (to be passed as `MASTO_ACCESS_TOKEN` env var)
    and the [Bluesky refresh token](#retrieving-the-bluesky-refresh-token) (to be stored in `bsky.token`) if you don't have them already
-4. Create the docker container
-   ``docker create -e BSKY_BASE_URI=<base-uri> -e MASTO_BASE_URI=<base-uri> -e MASTO_ACCESS_TOKEN=<access-token> -e MASTO_VISIBILITY=<visibility> -e ENV=<env> -v `pwd`/bsky.token:/zugunfall/bsky.token -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
+4. Retrieve the [dub api key](https://dub.co/docs/api-reference/tokens) (to be passed as `DUB_API_KEY`)
+5. Create the docker container
+   ``docker create -e MASTO_BASE_URI=<base-uri> -e MASTO_ACCESS_TOKEN=<access-token> -e MASTO_VISIBILITY=<visibility> -e DUB_API_KEY=<api-key> -e ENV=<env> -v `pwd`/bsky.token:/zugunfall/bsky.token -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
 
 ## Running it
 
@@ -43,7 +44,7 @@ Run `docker start zugunfall`
 
 The bot can be configured by environment variables:
 
-* `BSKY_BASE_URI` This is the base URI of the Bluesky instance including the protocol, eg. `https://bsky.social`
+* `BSKY_BASE_URI` This is the base URI of the Bluesky instance including the protocol, defaults to `https://bsky.social`
 * `BSKY_TOKEN_FILE` Name of the token file to use, defaults to `bsky.token`
 * `DUB_API_KEY` API Key for the dub link shortener
 * `DUB_BASE_URI` Base URI for the dub link shortener, defaults to `https://api.dub.co`
