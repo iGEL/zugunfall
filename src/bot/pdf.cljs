@@ -16,8 +16,9 @@
                       (resolve {:stdout stdout
                                 :stderr stderr})))))))
 
-(defn download-pdf+ [{:keys [report-pdf-uri] :as report}]
-  (let [pdf-path (str "reports/" (random-uuid) ".pdf")]
+(defn download-pdf+ [{:keys [report-pdf-uri report-id] :as report}]
+  (let [raw-report-id (->> report-id (re-find #"\[id:(.*)\]") last)
+        pdf-path (str "reports/" raw-report-id ".pdf")]
     (-> (http/raw-request+ report-pdf-uri {:method "GET"})
         (.then #(.arrayBuffer %))
         (.then #(js/Buffer.from %))
