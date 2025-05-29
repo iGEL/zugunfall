@@ -58,13 +58,13 @@
        (.then http/ensure-ok+)
        (.then http/parse-json+))))
 
-(defn upload-media+ [image-path]
+(defn upload-media+ [{:keys [path content-type]}]
   (-> (js/Promise.all [(get-access-token+)
-                       (fs/readFile image-path)])
+                       (fs/readFile path)])
       (.then (fn [[{:keys [access-token]} buffer]]
                (http/post+ (str base-uri "/xrpc/com.atproto.repo.uploadBlob")
                            buffer
-                           {:headers {:content-type "image/png"
+                           {:headers {:content-type content-type
                                       :authorization (str "Bearer " access-token)}})))
       (.then http/ensure-ok+)
       (.then http/parse-json+)))
@@ -94,8 +94,9 @@
   (re-find #"\[id:[a-zA-Z0-9-_]{10}\]" (-> post :post :record :text)))
 
 (defn upload-screenshots+ [{:keys [interesting-pages] :as report}]
-  (-> (js/Promise.all (map (fn [{:keys [image-path]}]
-                             (upload-media+ image-path))
+  (-> (js/Promise.all (map (fn [{:keys [image-path content-type]}]
+                             (upload-media+ {:path image-path
+                                             :content-type content-type}))
                            interesting-pages))
       (.then (fn [results]
                (assoc report

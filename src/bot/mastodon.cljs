@@ -101,10 +101,10 @@
       (.then http/ensure-ok+)))
 
 (defn upload-screenshots+ [{:keys [interesting-pages] :as report}]
-  (-> (js/Promise.all (map (fn [{:keys [text image-path]}]
+  (-> (js/Promise.all (map (fn [{:keys [text image-path content-type]}]
                              (upload-media+ {:path image-path
                                              :description text
-                                             :content-type "image/png"}))
+                                             :content-type content-type}))
                            interesting-pages))
       (.then (fn [responses]
                (assoc report
