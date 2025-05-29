@@ -1,6 +1,7 @@
 (ns bot.bsky
   (:require
    ["fs/promises" :as fs]
+   [bot.dub :as dub]
    [bot.http :as http]
    [bot.log :refer [log]]
    [clojure.string :as str]))
@@ -109,16 +110,27 @@
        .-length))
 
 (defn post-text [{:keys [report-id]
-                  {:keys [title tags]} :post}]
-  (str title "\n" (str/join " " (map #(str "#" %) tags)) " " report-id))
+                  {:keys [title tags uri]} :post}]
+  (str title "\n" uri "\n" (str/join " " (map #(str "#" %) tags)) " " report-id))
+
+(defn post-text-with-shortened-link+ [{{:keys [uri]} :post
+                                       :as report}]
+  (let [text-with-full-uri (post-text report)]
+    (if (< (count text-with-full-uri) 300)
+      (js/Promise.resolve {:text text-with-full-uri
+                           :uri uri})
+      (-> (dub/create-link+ {:uri uri})
+          (.then (fn [short-uri]
+                   {:text (post-text (assoc-in report [:post :uri] short-uri))
+                    :uri short-uri}))))))
 
 (defn report->post [{:keys [interesting-pages]
-                     {:keys [title uri tags]} :post
+                     {:keys [title tags]} :post
                      :as report}]
-  (-> (get-access-token+)
-      (.then (fn [{:keys [handle]}]
-               (let [text (post-text report)
-                     facets (reduce
+  (-> (js/Promise.all [(get-access-token+)
+                       (post-text-with-shortened-link+ report)])
+      (.then (fn [[{:keys [handle]} {:keys [text uri]}]]
+               (let [facets (reduce
                              (fn [prev tag]
                                (let [byte-start (-> prev last :index :byteEnd inc)]
                                  (conj prev
@@ -126,8 +138,10 @@
                                                 :byteEnd (+ byte-start (byte-length tag) 1)}
                                         :features [{"$type" "app.bsky.richtext.facet#tag"
                                                     "tag" tag}]})))
-                             [{:index {:byteStart 0
-                                       :byteEnd (byte-length title)}
+                             [{:index {:byteStart (byte-length title)
+                                       :byteEnd (+ (byte-length title)
+                                                   (byte-length uri)
+                                                   1)}
                                :features [{"$type" "app.bsky.richtext.facet#link"
                                            "uri" uri}]}]
                              tags)]
