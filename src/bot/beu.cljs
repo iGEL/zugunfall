@@ -19,33 +19,44 @@
       (.getAttribute "href")
       uri))
 
+(defn trim-text [value]
+  (some-> value str/trim))
+
+(defn extract-event-date [info]
+  (or (->> info
+           (re-find #"Ereignis vom:\s*([^,\n]+)")
+           second
+           trim-text)
+      (throw (ex-info "Could not extract event date from BEU report details"
+                      {:info info}))))
+
 (defn extract-search-results [report-type {:keys [body]}]
   (let [fragments (-> body
                       parse
                       (.querySelectorAll ".searchresult .row"))]
     (->> fragments
          (map (fn [fragment]
-                {:report-type (str/trim report-type)
+                {:report-type (trim-text report-type)
                  :report-date (->> (-> fragment (.querySelector "p") .-text)
                                    (re-find #"Publikation vom: (.+)")
                                    last
-                                   str/trim)
+                                   trim-text)
                  :report-overview-uri (->> fragment
                                            (extract-uri "a")
-                                           str/trim)
+                                           trim-text)
                  :report-pdf-uri (->> fragment
                                       (extract-uri "a.downloadLink")
-                                      str/trim)
+                                      trim-text)
                  :event-location (-> fragment
                                      (.querySelector "a")
                                      .-firstChild
                                      .-text
-                                     str/trim)
+                                     trim-text)
                  :event-type (-> fragment
                                  (.querySelectorAll "p")
                                  last
                                  .-text
-                                 str/trim)}))
+                                 trim-text)}))
          (map (fn [report]
                 (let [report-id (str
                                  "[id:"
@@ -69,11 +80,11 @@
                (let [fragment (-> body
                                   parse
                                   (.querySelector "#main"))
-                     info (-> fragment
-                              (.querySelector ".info")
-                              .-text)
-                     [_ event-date] (re-find #"^Thema: .+, Ereignis vom: (.+), Publikation vom: .+$" info)]
-                 (assoc report :event-date (str/trim event-date)))))))
+                     info (some-> fragment
+                                  (.querySelector ".info")
+                                  .-text)
+                     event-date (extract-event-date info)]
+                 (assoc report :event-date event-date))))))
 
 (defn fetch-reports-details+ [reports]
   (js/Promise.all
