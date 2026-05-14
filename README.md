@@ -34,7 +34,7 @@ The bot uses
    and the [Bluesky refresh token](#retrieving-the-bluesky-refresh-token) (to be stored in `bsky.token`) if you don't have them already
 4. Retrieve the [dub api key](https://dub.co/docs/api-reference/tokens) (to be passed as `DUB_API_KEY`)
 5. Create the docker container
-   ``docker create -e MASTO_BASE_URI=<base-uri> -e MASTO_ACCESS_TOKEN=<access-token> -e MASTO_VISIBILITY=<visibility> -e DUB_API_KEY=<api-key> -e ENV=<env> -v `pwd`/bsky.token:/zugunfall/bsky.token -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
+   ``docker create -e BSKY_BASE_URI=<base-uri> -e MASTO_BASE_URI=<base-uri> -e MASTO_ACCESS_TOKEN=<access-token> -e MASTO_VISIBILITY=<visibility> -e DUB_API_KEY=<api-key> -e ENV=<env> -v `pwd`/bsky.token:/zugunfall/bsky.token -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
 
 ## Running it
 
