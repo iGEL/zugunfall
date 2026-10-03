@@ -2,13 +2,14 @@
   (:require
    [bot.http :as http]
    [bot.log :refer [log]]
+   [bot.post-draft :as draft]
    [clojure.string :as string]))
 
 (def instance-base-uri (-> js/process .-env .-MASTO_BASE_URI))
 (def access-token (-> js/process .-env .-MASTO_ACCESS_TOKEN))
 (def visibility (or (-> js/process .-env .-MASTO_VISIBILITY)
                     "unlisted"))
-(def description-max-length 1000)
+(def description-max-length 1500)
 
 (defn get+
   ([path]
@@ -75,17 +76,19 @@
 (defn report-id [toot]
   (re-find #"\[id:[a-zA-Z0-9-_]{10}\]" (toot-content {:text-only true} toot)))
 
-(defn shortened-description [description]
-  (let [bytes (.encode (js/TextEncoder.) description)]
-    (if (>= (.-length bytes) description-max-length)
-      (let [shortened-bytes (.slice bytes 0 (- description-max-length 4))
-            tdn (.decode (js/TextDecoder. "utf-8") shortened-bytes)]
-        (str (.replace tdn #"\uFFFD" "") "…"))
-      description)))
+(defn shortened-description
+  ([description] (shortened-description description description-max-length))
+  ([description max-length]
+   ;; Mastodon counts codepoints, not UTF-8 bytes. Never split a surrogate pair.
+   (let [characters (js/Array.from description)]
+     (if (> (.-length characters) max-length)
+       (str (.join (.slice characters 0 (dec max-length)) "") "…")
+       description))))
 
-(defn upload-media+ [{:keys [path description content-type] :as report}]
+(defn upload-media+ [{:keys [path description content-type description-limit] :as report}]
   (-> (multi-part-post+ "/api/v2/media"
-                        [{:name "description" :value (shortened-description description)}
+                        [{:name "description" :value (shortened-description description
+                                                                            (or description-limit description-max-length))}
                          {:name "file" :file path :content-type content-type}]
                         {:headers {:authorization (str "Bearer " access-token)}})
       (.then (fn [{:keys [status headers], :as response}]
@@ -100,24 +103,34 @@
                  response)))
       (.then http/ensure-ok+)))
 
-(defn upload-screenshots+ [{:keys [interesting-pages] :as report}]
-  (-> (js/Promise.all (map (fn [{:keys [text image-path content-type]}]
+(defn upload-screenshots+ [{:keys [interesting-pages limits] :as report}]
+  (-> (js/Promise.all (map (fn [{:keys [text alt image-path content-type]}]
                              (upload-media+ {:path image-path
-                                             :description text
+                                             :description (or alt text)
+                                             :description-limit (:description_limit limits)
                                              :content-type content-type}))
                            interesting-pages))
       (.then (fn [responses]
                (assoc report
                       :interesting-pages
                       (map-indexed (fn [idx response]
-                                     (assoc (get interesting-pages idx)
+                                     (assoc (nth interesting-pages idx)
                                             :media-id
                                             (-> response :body :id)))
                                    responses))))))
 
-(defn toot-text [{:keys [report-id]
-                  {:keys [title uri tags]} :post}]
-  (str title "\n" uri "\n" (string/join " " (map #(str "#" %) tags)) " " report-id))
+(defn toot-text [report]
+  (let [post (-> report :posts :mastodon)
+        limits (:limits report)
+        text (:text post)
+        uri (:uri post)]
+    (when-not (and (:fits? post) (string? text) (string? uri)
+                   (string/includes? text uri)
+                   (<= (+ (draft/grapheme-count (string/replace text uri ""))
+                          (:characters_reserved_per_url limits))
+                       (:max_characters limits)))
+      (throw (ex-info "Refusing to publish an invalid Mastodon draft" {})))
+    text))
 
 (defn report->toot [{:keys [interesting-pages]
                      :as report}]
@@ -129,6 +142,7 @@
                    (filter identity))})
 
 (defn publish-toot+ [report]
+  (toot-text report)
   (-> (upload-screenshots+ report)
       (.then report->toot)
       (.then (fn [toot]

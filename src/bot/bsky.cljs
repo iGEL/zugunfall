@@ -1,9 +1,9 @@
 (ns bot.bsky
   (:require
    ["fs/promises" :as fs]
-   [bot.dub :as dub]
    [bot.http :as http]
    [bot.log :refer [log]]
+   [bot.post-draft :as draft]
    [clojure.string :as str]))
 
 (def base-uri (or (-> js/process .-env .-BSKY_BASE_URI)
@@ -106,47 +106,21 @@
                                                                :image blob))
                                                       results))))))
 
-(defn- byte-length [text]
-  (->> text
-       (.encode (js/TextEncoder.))
-       .-length))
+(defn checked-post [report]
+  (let [post (-> report :posts :bluesky)]
+    (when-not (and (:fits? post) (string? (:text post)) (seq (:facets post))
+                   (<= (draft/grapheme-count (:text post)) draft/bsky-max-graphemes)
+                   (<= (draft/byte-count (:text post)) draft/bsky-max-bytes))
+      (throw (ex-info "Refusing to publish an invalid Bluesky draft" {})))
+    post))
 
-(defn post-text [{:keys [report-id]
-                  {:keys [title tags uri]} :post}]
-  (str title "\n" uri "\n" (str/join " " (map #(str "#" %) tags)) " " report-id))
+(defn post-text [report]
+  (:text (checked-post report)))
 
-(defn post-text-with-shortened-link+ [{{:keys [uri]} :post
-                                       :as report}]
-  (let [text-with-full-uri (post-text report)]
-    (if (< (count text-with-full-uri) 300)
-      (js/Promise.resolve {:text text-with-full-uri
-                           :uri uri})
-      (-> (dub/create-link+ {:uri uri})
-          (.then (fn [short-uri]
-                   {:text (post-text (assoc-in report [:post :uri] short-uri))
-                    :uri short-uri}))))))
-
-(defn report->post [{:keys [interesting-pages]
-                     {:keys [title tags]} :post
-                     :as report}]
-  (-> (js/Promise.all [(get-access-token+)
-                       (post-text-with-shortened-link+ report)])
-      (.then (fn [[{:keys [handle]} {:keys [text uri]}]]
-               (let [facets (reduce
-                             (fn [prev tag]
-                               (let [byte-start (-> prev last :index :byteEnd inc)]
-                                 (conj prev
-                                       {:index {:byteStart byte-start
-                                                :byteEnd (+ byte-start (byte-length tag) 1)}
-                                        :features [{"$type" "app.bsky.richtext.facet#tag"
-                                                    "tag" tag}]})))
-                             [{:index {:byteStart (byte-length title)
-                                       :byteEnd (+ (byte-length title)
-                                                   (byte-length uri)
-                                                   1)}
-                               :features [{"$type" "app.bsky.richtext.facet#link"
-                                           "uri" uri}]}]
-                             tags)]
+(defn report->post [{:keys [interesting-pages] :as report}]
+  (let [{:keys [text facets]} (checked-post report)]
+    (-> (get-access-token+)
+        (.then (fn [{:keys [handle]}]
                  {"repo" handle
                   "collection" "app.bsky.feed.post"
                   "record" {"$type" "app.bsky.feed.post"
@@ -155,12 +129,13 @@
                             "langs" ["de"]
                             "createdAt" (-> (js/Date.) .toISOString)
                             "embed" {"$type" "app.bsky.embed.images"
-                                     "images" (map (fn [{:keys [image text]}]
-                                                     {"alt" text
+                                     "images" (map (fn [{:keys [image text alt]}]
+                                                     {"alt" (or alt text)
                                                       "image" image})
                                                    interesting-pages)}}})))))
 
 (defn publish-post+ [report]
+  (checked-post report)
   (-> (upload-screenshots+ report)
       (.then report->post)
       (.then (fn [post]

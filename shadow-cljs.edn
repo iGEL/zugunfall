@@ -9,4 +9,12 @@
                                                "fs/promises"
                                                "node-fetch"}}
                 :modules {:app {:init-fn bot.main/main}}
-                :output-dir "target"}}}
+                :output-dir "target"}
+          :dry-run {:target :esm
+                    :js-options {:keep-as-import #{"child_process" "crypto" "fs/promises" "node-fetch"}}
+                    :modules {:main {:init-fn bot.dry-run/main}}
+                    :output-dir "target/dry-run"}
+          :dry-run-test {:target :esm
+                         :js-options {:keep-as-import #{"child_process" "crypto" "fs/promises" "node-fetch"}}
+                         :modules {:main {:init-fn bot.dry-run-test/main}}
+                         :output-dir "target/dry-run-test"}}}

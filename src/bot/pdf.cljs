@@ -116,7 +116,7 @@
                                             :interesting-page interesting-page}))
                            interesting-pages))
       (.then (fn [new-pages]
-               (assoc report :interesting-pages new-pages)))))
+               (assoc report :interesting-pages (vec new-pages))))))
 
 (defn add-interesting-pages-with-screenshots+ [report]
   (-> (download-pdf+ report)

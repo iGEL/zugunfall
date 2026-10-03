@@ -32,26 +32,176 @@ The bot uses
 2. Create the docker image `docker build -t zugunfall .`
 3. Retrieve the [Mastodon access token](#creating-the-mastodon-api-application--retrieving-the-access-token) (to be passed as `MASTO_ACCESS_TOKEN` env var)
    and the [Bluesky refresh token](#retrieving-the-bluesky-refresh-token) (to be stored in `bsky.token`) if you don't have them already
-4. Retrieve the [dub api key](https://dub.co/docs/api-reference/tokens) (to be passed as `DUB_API_KEY`)
+4. Create an OpenAI API key (to be passed as `OPENAI_API_KEY`).
 5. Create the docker container
-   ``docker create -e BSKY_BASE_URI=<base-uri> -e MASTO_BASE_URI=<base-uri> -e MASTO_ACCESS_TOKEN=<access-token> -e MASTO_VISIBILITY=<visibility> -e DUB_API_KEY=<api-key> -e ENV=<env> -v `pwd`/bsky.token:/zugunfall/bsky.token -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
+   ``docker create -e BSKY_BASE_URI=<base-uri> -e MASTO_BASE_URI=<base-uri> -e MASTO_ACCESS_TOKEN=<access-token> -e MASTO_VISIBILITY=<visibility> -e OPENAI_API_KEY -e ENV=<env> -v `pwd`/bsky.token:/zugunfall/bsky.token -v `pwd`/reports:/zugunfall/reports --name zugunfall zugunfall``
 
 ## Running it
 
 Run `docker start zugunfall`
 
-## Configuration
+The normal publishing flow now uses the same AI prompt, validation, length checks,
+and up-to-three-attempt correction logic as the preview command. It selects up to
+four pages and uses separate summaries for Mastodon and Bluesky. Bluesky links use
+the `BEU-Bericht` label and the original report URL, without a link shortener.
+Optional hashtags are dropped when necessary; the report ID remains for deduplication.
+
+For a local build, with the social-network credentials configured:
+
+```sh
+npm run build
+export OPENAI_API_KEY=your-api-key
+npm run exec
+# Set ENV=prod only when you want to actually publish.
+```
+
+Normal runs still read social-network accounts and refresh the Bluesky token even
+outside production, but upload images and publish statuses only with `ENV=prod`.
+AI requests can incur charges in either mode. No-new-report runs make no AI requests.
+Reports are prepared sequentially, and all drafts must pass validation before any
+media upload or publishing begins. Preparation failure aborts the run with exit
+status 1; it does not silently fall back to the old template. Already-published
+reports remain skipped independently on each platform. Network failures during
+publishing can still leave a report posted to only one platform; the next run uses
+the existing report IDs to retry only the missing platform.
+
+Publishing shares the `reports/ai-preview/<report-id>/` cache with dry runs when
+PDF content, metadata, model, prompt, and server limits match. It saves the exact
+prepared drafts, selected pages, and generation details to `publishing.json`;
+it does not create or update the comparison HTML. Keep the reports volume mounted
+to retain this cache between Docker runs.
+
+Image alt text combines the visual description and extracted page text. Bluesky
+receives the full combined text. Mastodon receives as much as its instance's
+`configuration.media_attachments.description_limit` allows (default 1,500
+characters when not advertised), with an ellipsis if shortened. The full text
+remains in the local artifacts and linked source PDF.
+See the [Mastodon instance configuration](https://docs.joinmastodon.org/entities/Instance/)
+for this separate media-description limit.
+
+## AI preview dry run
+
+This separate command creates review drafts; it never publishes, reads social-network
+accounts, refreshes Bluesky tokens, or creates shortened links, even with `ENV=prod`.
+It uses the public BEU reports and the public Mastodon instance configuration.
+It uses the same AI generation code as publishing, without accessing the publishers.
+
+Install the Node dependencies and Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`), then:
+
+```sh
+npm run build:dry-run
+export OPENAI_API_KEY=your-api-key
+npm run dry-run -- --count 1
+```
+
+Start with one report to assess quality and usage. `--count 10` compares the ten latest
+reports, including intermediate reports. Each PDF, its extracted text, and report
+metadata are sent to OpenAI. The default model is `gpt-4.1-mini`; change it with
+`--model MODEL` or `OPENAI_MODEL` to another model supporting PDF vision and
+Structured Outputs. Requests use `store: false`; full generation has a 6,000
+output-token cap and text-only Bluesky shortening has a 700 output-token cap.
+
+Open `reports/ai-preview/<report-id>/index.html` to compare the existing page-selection
+heuristic and post template with the AI proposal. The folder also contains the source
+PDF, rendered page images, and `comparison.json`, including:
+
+- Complete German drafts for both platforms and their measured lengths.
+- One to four selected physical PDF pages, selection reasons, optional visual
+  descriptions, and the full extracted page text used as image alternative text.
+- Supporting source quotations and page references for the summaries.
+- Model name, API response ID, token usage for each attempt, and cache status.
+
+The prompt favors a balanced mix of informative photos, maps, and diagrams, readable
+previews, and factual event summaries. Relevant photos have a slight preference over
+additional similar diagrams when equally suitable; informative maps and diagrams
+remain valuable, and there is no fixed quota per image type.
+Both texts are prompted to start with the report type (`Untersuchungsbericht`
+or `Zwischenbericht`); validation accepts it anywhere within the first five words,
+including “Der Untersuchungsbericht …”. Selected pages normally follow physical PDF page order;
+the model may choose a different order if it explains a good content-related reason.
+For meaningful photos, maps, and diagrams, the same AI request also returns a short
+German visual description. The app prepends it to the full extracted page text in
+the image alternative text. Text-only pages use just the extracted text. The model
+does not transcribe the page text, and the app does not truncate it. Descriptions and
+the full original page text are also shown separately in the HTML review.
+The model cites numbered
+source passages; the app copies their original extracted text into the supporting
+quotations. This avoids requiring the model to transcribe PDFs with broken font
+encodings or missing letters. Source IDs and their physical page numbers are validated.
+This does not verify that every claim follows from its
+quotation; review the comparison before using a draft for publication.
+
+Mastodon limits are fetched on every run from `MASTO_BASE_URI`, defaulting to
+`https://zug.network`. That instance currently allows 5,000 graphemes per status and
+reserves 23 for each URL. Drafts include the full report URL and the existing report ID.
+Bluesky drafts enforce both 300 graphemes and 3,000 UTF-8 bytes, including the link,
+tags, and report ID. They use the displayed link label `BEU-Bericht` with a rich-text
+link facet targeting the full original URL; `comparison.json` contains the facets
+with UTF-8 byte offsets. The AI body is kept intact while optional tags are removed
+as necessary. Bluesky is prompted as a brief event announcement targeting at most
+220 characters, including the report type, leaving a safety margin below the hard
+body limit. If only Bluesky exceeds its limit, a small text-only request shortens
+that body while retaining Mastodon text, selected pages, visual descriptions, and
+evidence. It does not resend the PDF. If other validation fails, the full generation
+is corrected. There are at most three AI requests per report in total.
+Full correction requests resend the PDF and source catalog, followed by a separate
+message containing the previous result and errors. Unknown source references also
+get a focused list of existing passages and their full text for the affected pages.
+The correction message is saved as `retry-feedback` in each attempt JSON for inspection.
+An invalid result is rejected rather than saved as a valid
+draft. The normal publisher uses only validated drafts from this same pipeline.
+
+Matching AI results are cached by PDF content, model, metadata, prompt/schema, and
+platform limits. Re-running uses the cache without an API key or further AI charges;
+it still reads public report metadata and downloads the PDF. `--refresh` regenerates
+the selection and text. Reports run sequentially. A failed report is recorded in
+`summary.json`, subsequent reports continue, and the command exits with status 1 if
+any report failed. Every parsed model attempt is saved in `attempt-<run>-<number>.json`,
+including validation errors and token usage, before validation can reject it. If AI
+generation fails after PDF preparation, an `index.html` review is still saved with
+a prominent rejection notice and diagnostic details; `comparison.json` has
+`accepted?: false`. No generated fallback is silently substituted.
+
+Options: `--count N` (1–20, default 1), `--model NAME`, `--out DIR`, `--refresh`,
+`--manifest FILE`, and `--help`. For a repeatable selection or local PDF, provide a
+JSON manifest; relative local paths are relative to the working directory:
+
+```json
+[
+  {
+    "report-id": "[id:0123456789]",
+    "report-type": "Untersuchungsbericht",
+    "report-date": "02.01.2026",
+    "event-type": "Entgleisung",
+    "event-date": "01.01.2026",
+    "event-location": "Example location",
+    "report-overview-uri": "https://example.org/report",
+    "report-pdf-uri": "https://example.org/report.pdf",
+    "pdf-path": "reports/example.pdf"
+  }
+]
+```
+
+```sh
+npm run dry-run -- --manifest reports-to-review.json --count 10
+npm run test:dry-run
+```
+
+The tests use an offline OpenAI stub and a real small PDF through Poppler; they make
+no paid requests and do not need credentials.
+
+## Publishing configuration
 
 The bot can be configured by environment variables:
 
 * `BSKY_BASE_URI` This is the base URI of the Bluesky instance including the protocol, defaults to `https://bsky.social`
 * `BSKY_TOKEN_FILE` Name of the token file to use, defaults to `bsky.token`
-* `DUB_API_KEY` API Key for the dub link shortener
-* `DUB_BASE_URI` Base URI for the dub link shortener, defaults to `https://api.dub.co`
+* `OPENAI_API_KEY` OpenAI API key; required for uncached AI drafts. PDFs, extracted text, and metadata are sent to the [OpenAI Responses API](https://developers.openai.com/api/docs/guides/file-inputs/).
+* `OPENAI_MODEL` Model for summaries, page selection, and image descriptions, defaults to `gpt-4.1-mini`.
 * `MASTO_BASE_URI` This is the base URI of the Mastodon instance including the protocol, eg. `https://zug.network`
 * `MASTO_ACCESS_TOKEN` The access token for using the Mastodon API
 * `MASTO_VISIBILITY` The visibility of toots to publish, see [Mastodon API docs](https://docs.joinmastodon.org/methods/statuses/#form-data-parameters). Defaults to `unlisted`, you might want `public`.
-* `ENV` Unless this is set to `prod`, toots will actually not be published. Defaults to `dev`.
+* `ENV` Posts are published only when this is set to `prod`. Defaults to `dev`.
 
 ## Creating the Mastodon API application & retrieving the access token
 

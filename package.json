@@ -5,6 +5,9 @@
   "scripts": {
     "build": "shadow-cljs compile app",
     "exec": "node target/app.js",
+    "build:dry-run": "shadow-cljs compile dry-run",
+    "dry-run": "node target/dry-run/main.js",
+    "test:dry-run": "shadow-cljs compile dry-run-test && node target/dry-run-test/main.js",
     "fmt": "clojure -M:cljfmt-fix && clojure -M:nsorg-fix src",
     "lint": "clojure -M:lint"
   },
