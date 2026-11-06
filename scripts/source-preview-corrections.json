@@ -1,0 +1,58 @@
+{
+  "cw_uyfxzZ1": {
+    "pdf-sha256": "5a0b11dfd76f3de9c27cdb3e876b3d7e88c929ec58e80f00c2c33eb314efd689",
+    "replacements": [
+      [
+        "Ro erdam",
+        "Rotterdam"
+      ]
+    ]
+  },
+  "RiVQHBBVyx": {
+    "pdf-sha256": "3cb3ee6bf616fc480be2389dfdb38551fe049d2abc8dd3117065d1d9734eba61",
+    "replacements": [
+      [
+        "Personenkra wagen",
+        "Personenkraftwagen"
+      ]
+    ]
+  },
+  "2CqYre6vc1": {
+    "pdf-sha256": "6d59439bb57098e21b4aa8bcfb262045d73c557bd31095b817028a1c7e8bf78d",
+    "replacements": [
+      [
+        "Nothaltau rag",
+        "Nothaltauftrag"
+      ],
+      [
+        "ha e",
+        "hatte"
+      ],
+      [
+        "Hauptlu leitung",
+        "Hauptluftleitung"
+      ],
+      [
+        "(B )",
+        "(Bft)"
+      ],
+      [
+        "Austri von",
+        "Austritt von"
+      ]
+    ]
+  },
+  "jZ8bhKkzTR": {
+    "pdf-sha256": "72ce5ec0cad8116740b26a7aec2a05705113fad4d27bfddd69ea8e9ee69d99f1",
+    "replacements": [
+      [
+        "Scho erflug",
+        "Schotterflug"
+      ],
+      [
+        "Nothaltau rag",
+        "Nothaltauftrag"
+      ]
+    ]
+  }
+}

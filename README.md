@@ -40,15 +40,16 @@ The bot uses
 
 Run `docker start zugunfall`
 
-The normal publishing flow now uses the same AI prompt, validation, length checks,
-and up-to-three-attempt correction logic as the preview command. It selects up to
-four pages and uses separate summaries for Mastodon and Bluesky. Bluesky links use
-the `BEU-Bericht` label and the original report URL, without a link shortener.
-Optional hashtags are dropped when necessary; the report ID remains for deduplication.
+Publishing and previews use the same source-text pipeline: programmatic headlines,
+repaired event descriptions and optional “Folgen”, repaired full-page image alt
+text, and AI image selection. AI shortens Mastodon text only when the complete
+post still exceeds the instance limit after optional hashtags are removed.
+Bluesky uses the headline plus link, optional hashtags and report ID.
 
 For a local build, with the social-network credentials configured:
 
 ```sh
+npm run setup:pdf # once, requires Python 3.11+ and venv support
 npm run build
 export OPENAI_API_KEY=your-api-key
 npm run exec
@@ -65,106 +66,119 @@ reports remain skipped independently on each platform. Network failures during
 publishing can still leave a report posted to only one platform; the next run uses
 the existing report IDs to retry only the missing platform.
 
-Publishing shares the `reports/ai-preview/<report-id>/` cache with dry runs when
-PDF content, metadata, model, prompt, and server limits match. It saves the exact
-prepared drafts, selected pages, and generation details to `publishing.json`;
+Publishing shares `reports/ai-preview/<report-id>/source-cache-*.json` with previews
+when the original PDF, repaired text, metadata, model, prompts and limits match.
+Old `cache-*.json` drafts from the previous full AI summarization pipeline are not
+used. Publishing saves the exact prepared drafts, selected pages, and generation details to `publishing.json`;
 it does not create or update the comparison HTML. Keep the reports volume mounted
 to retain this cache between Docker runs.
 
-Image alt text combines the visual description and extracted page text. Bluesky
-receives the full combined text. Mastodon receives as much as its instance's
+Image alt text combines the visual description and repaired page text, including
+corrected ligatures and readable bullet lists. Bluesky receives the full combined text. Mastodon receives as much as its instance's
 `configuration.media_attachments.description_limit` allows (default 1,500
 characters when not advertised), with an ellipsis if shortened. The full text
 remains in the local artifacts and linked source PDF.
 See the [Mastodon instance configuration](https://docs.joinmastodon.org/entities/Instance/)
 for this separate media-description limit.
 
-## AI preview dry run
+## Source-first preview dry run
 
-This separate command creates review drafts; it never publishes, reads social-network
-accounts, refreshes Bluesky tokens, or creates shortened links, even with `ENV=prod`.
-It uses the public BEU reports and the public Mastodon instance configuration.
-It uses the same AI generation code as publishing, without accessing the publishers.
+The preview tool repairs known missing PDF font mappings, extracts the event
+description and consequences, and composes messages programmatically. It never
+publishes, reads social accounts or refreshes tokens, even with `ENV=prod`.
+The same preparation code is used by publishing; the preview adds comparison HTML.
 
-Install the Node dependencies and Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`), then:
+Install the Node dependencies, Java/Clojure build tools, Poppler (`pdfinfo`,
+`pdftotext`, `pdftoppm`) and Python 3.11+, then set up the repair dependencies once:
+
+```sh
+npm run setup:preview
+```
+
+This creates `.venv-pdf` with pinned pypdf and fontTools dependencies. Alternatively,
+set `PDF_REPAIR_PYTHON` to a Python interpreter with the packages from
+`scripts/requirements-pdf-repair.txt` installed. No API key is used for repair.
+
+Pass your API key and a BEU report detail page or PDF URL:
+
+```sh
+OPENAI_API_KEY='your-key' npm run preview:report -- 'https://www.eisenbahn-unfalluntersuchung.de/SharedDocs/Downloads/BEU/Zwischenberichte/2025/111_Zwischenbericht_Emmerich.html'
+```
+
+The command builds and runs the preview. It prints the path to
+`reports/ai-preview/<report-id>/index.html`. Open it to compare:
+
+- The original extracted event description and “Folgen”, before font repair.
+- The repaired source sections, with source PDF page links.
+- Complete generated Mastodon and Bluesky posts and their measured lengths.
+- AI-selected images, selection reasons and visual descriptions.
+- Full corrected page text and final image alt text, alongside the uncorrected text.
+- Whether Mastodon text was copied or shortened, and whether “Folgen” was included.
+
+Both headlines come from report metadata and contain report type, event type,
+event date and place. Bluesky uses only the headline plus link, optional tags and
+report ID. Mastodon copies the repaired event description. When description plus
+consequences total at most 1,500 graphemes and fit the complete status budget,
+“Folgen” is added as a separate paragraph. Longer descriptions remain complete if
+they fit. Optional tags are removed before requesting shortening.
+
+AI is always used for image selection and visual descriptions. Its image schema
+contains only `pages`; it does not compose the post text. Only if the source text
+exceeds Mastodon's budget is a separate text-only AI request made to remove less
+relevant details while preserving wording, key facts and qualifications. The
+headline is added by the application afterwards, so AI cannot change it. AI never
+rewrites the full page text used in alt text. A missing event-description section
+or an oversized Bluesky headline is rejected explicitly, with no AI fallback.
+
+Bullet lists are preserved in copied posts and full page alt text. The verified
+SymbolMT bullet mapping (`U+F0B7`, a private-use character) is corrected to `•`.
+Detached bullet lines are joined to their item text, wrapped item text is joined
+for posts, and each list item remains on its own line. Other private-use characters
+are not globally replaced. Original page extraction remains available for comparison.
+
+Repair restores only exact, visually verified glyph outlines. Unknown fonts or
+unrecognized shapes can still have extraction errors; inspect the source PDF.
+The original PDF is preserved. A `text-repair-*` subfolder contains the repaired
+copy and repair diagnostics. Only standard Latin ligatures are expanded in the
+full page text; symbols such as m² remain intact. Post composition additionally
+cleans repeated headers/footers, captions and PDF line wrapping. The full corrected
+page text is retained for alt text, including material outside the summary.
+
+The HTML and `comparison.json` contain the accepted drafts, source sections,
+selected pages, text policy and model-attempt usage. There are at most three
+attempts per AI stage (image selection and, only when needed, shortening), at most
+six calls per report. Attempts are saved as `source-attempt-*.json`. Invalid
+results produce a rejection review and a nonzero exit status. Review shortened
+text against the source; length and structure checks do not prove semantic fidelity.
+
+The default model remains `gpt-4.1-mini`; use `--model MODEL` or `OPENAI_MODEL` to
+change it. Requests use `store: false`; image selection has a 4,000 output-token
+cap, shortening 6,000. AI requests can incur charges. The selection request sends
+the source PDF; shortening sends only the copied event-description text.
+
+Matching results are cached together with publishing, keyed by original PDF,
+repaired page text, metadata, model, prompts/schema, composition version and
+platform limits. Rerunning a matching preview needs no key or new AI calls, but
+still performs PDF preparation and reads public report metadata and Mastodon
+instance limits. `--refresh` bypasses the generation cache. Limits include link
+and report ID; Bluesky checks both 300 graphemes and 3,000 bytes.
+
+For multiple reports, or a local PDF:
 
 ```sh
 npm run build:dry-run
-export OPENAI_API_KEY=your-api-key
-npm run dry-run -- --count 1
+OPENAI_API_KEY='your-key' npm run dry-run -- --count 5
+OPENAI_API_KEY='your-key' npm run dry-run -- --manifest reports-to-review.json --count 10
+npm run test:dry-run
+.venv-pdf/bin/python -m unittest discover -s scripts -p 'test_pdf_text_repair.py'
 ```
 
-Start with one report to assess quality and usage. `--count 10` compares the ten latest
-reports, including intermediate reports. Each PDF, its extracted text, and report
-metadata are sent to OpenAI. The default model is `gpt-4.1-mini`; change it with
-`--model MODEL` or `OPENAI_MODEL` to another model supporting PDF vision and
-Structured Outputs. Requests use `store: false`; full generation has a 6,000
-output-token cap and text-only Bluesky shortening has a 700 output-token cap.
+Tests use an offline AI stub and a small PDF through Poppler and the repair tool;
+they need the one-time repair setup, but no API credentials or paid requests.
 
-Open `reports/ai-preview/<report-id>/index.html` to compare the existing page-selection
-heuristic and post template with the AI proposal. The folder also contains the source
-PDF, rendered page images, and `comparison.json`, including:
-
-- Complete German drafts for both platforms and their measured lengths.
-- One to four selected physical PDF pages, selection reasons, optional visual
-  descriptions, and the full extracted page text used as image alternative text.
-- Supporting source quotations and page references for the summaries.
-- Model name, API response ID, token usage for each attempt, and cache status.
-
-The prompt favors a balanced mix of informative photos, maps, and diagrams, readable
-previews, and factual event summaries. Relevant photos have a slight preference over
-additional similar diagrams when equally suitable; informative maps and diagrams
-remain valuable, and there is no fixed quota per image type.
-Both texts are prompted to start with the report type (`Untersuchungsbericht`
-or `Zwischenbericht`); validation accepts it anywhere within the first five words,
-including “Der Untersuchungsbericht …”. Selected pages normally follow physical PDF page order;
-the model may choose a different order if it explains a good content-related reason.
-For meaningful photos, maps, and diagrams, the same AI request also returns a short
-German visual description. The app prepends it to the full extracted page text in
-the image alternative text. Text-only pages use just the extracted text. The model
-does not transcribe the page text, and the app does not truncate it. Descriptions and
-the full original page text are also shown separately in the HTML review.
-The model cites numbered
-source passages; the app copies their original extracted text into the supporting
-quotations. This avoids requiring the model to transcribe PDFs with broken font
-encodings or missing letters. Source IDs and their physical page numbers are validated.
-This does not verify that every claim follows from its
-quotation; review the comparison before using a draft for publication.
-
-Mastodon limits are fetched on every run from `MASTO_BASE_URI`, defaulting to
-`https://zug.network`. That instance currently allows 5,000 graphemes per status and
-reserves 23 for each URL. Drafts include the full report URL and the existing report ID.
-Bluesky drafts enforce both 300 graphemes and 3,000 UTF-8 bytes, including the link,
-tags, and report ID. They use the displayed link label `BEU-Bericht` with a rich-text
-link facet targeting the full original URL; `comparison.json` contains the facets
-with UTF-8 byte offsets. The AI body is kept intact while optional tags are removed
-as necessary. Bluesky is prompted as a brief event announcement targeting at most
-220 characters, including the report type, leaving a safety margin below the hard
-body limit. If only Bluesky exceeds its limit, a small text-only request shortens
-that body while retaining Mastodon text, selected pages, visual descriptions, and
-evidence. It does not resend the PDF. If other validation fails, the full generation
-is corrected. There are at most three AI requests per report in total.
-Full correction requests resend the PDF and source catalog, followed by a separate
-message containing the previous result and errors. Unknown source references also
-get a focused list of existing passages and their full text for the affected pages.
-The correction message is saved as `retry-feedback` in each attempt JSON for inspection.
-An invalid result is rejected rather than saved as a valid
-draft. The normal publisher uses only validated drafts from this same pipeline.
-
-Matching AI results are cached by PDF content, model, metadata, prompt/schema, and
-platform limits. Re-running uses the cache without an API key or further AI charges;
-it still reads public report metadata and downloads the PDF. `--refresh` regenerates
-the selection and text. Reports run sequentially. A failed report is recorded in
-`summary.json`, subsequent reports continue, and the command exits with status 1 if
-any report failed. Every parsed model attempt is saved in `attempt-<run>-<number>.json`,
-including validation errors and token usage, before validation can reject it. If AI
-generation fails after PDF preparation, an `index.html` review is still saved with
-a prominent rejection notice and diagnostic details; `comparison.json` has
-`accepted?: false`. No generated fallback is silently substituted.
-
-Options: `--count N` (1–20, default 1), `--model NAME`, `--out DIR`, `--refresh`,
-`--manifest FILE`, and `--help`. For a repeatable selection or local PDF, provide a
-JSON manifest; relative local paths are relative to the working directory:
+Options: `--url URL`, `--count N` (1–20, default 1), `--model NAME`, `--out DIR`,
+`--refresh`, `--manifest FILE`, and `--help`. `--url` and `--manifest` are mutually
+exclusive. Example manifest (relative local paths are relative to the working directory):
 
 ```json
 [
@@ -182,13 +196,11 @@ JSON manifest; relative local paths are relative to the working directory:
 ]
 ```
 
-```sh
-npm run dry-run -- --manifest reports-to-review.json --count 10
-npm run test:dry-run
-```
-
-The tests use an offline OpenAI stub and a real small PDF through Poppler; they make
-no paid requests and do not need credentials.
+The earlier editable, offline experiment remains available with
+`npm run preview:source`. It compares saved previews using sample-specific
+corrections and is independent of this repaired-PDF preview pipeline.
+See [the extraction investigation](docs/pdf-text-extraction.md) for how the glyph
+repair works and its coverage limits.
 
 ## Publishing configuration
 
@@ -197,7 +209,8 @@ The bot can be configured by environment variables:
 * `BSKY_BASE_URI` This is the base URI of the Bluesky instance including the protocol, defaults to `https://bsky.social`
 * `BSKY_TOKEN_FILE` Name of the token file to use, defaults to `bsky.token`
 * `OPENAI_API_KEY` OpenAI API key; required for uncached AI drafts. PDFs, extracted text, and metadata are sent to the [OpenAI Responses API](https://developers.openai.com/api/docs/guides/file-inputs/).
-* `OPENAI_MODEL` Model for summaries, page selection, and image descriptions, defaults to `gpt-4.1-mini`.
+* `OPENAI_MODEL` Model for image selection, visual descriptions, and necessary text shortening, defaults to `gpt-4.1-mini`.
+* `PDF_REPAIR_PYTHON` Optional Python interpreter with the pinned repair dependencies; defaults to `.venv-pdf/bin/python`, created by `npm run setup:pdf` (also installed by the Docker build).
 * `MASTO_BASE_URI` This is the base URI of the Mastodon instance including the protocol, eg. `https://zug.network`
 * `MASTO_ACCESS_TOKEN` The access token for using the Mastodon API
 * `MASTO_VISIBILITY` The visibility of toots to publish, see [Mastodon API docs](https://docs.joinmastodon.org/methods/statuses/#form-data-parameters). Defaults to `unlisted`, you might want `public`.

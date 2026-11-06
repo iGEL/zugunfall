@@ -6,6 +6,8 @@
             [bot.pdf :as pdf]
             [bot.post-draft :as draft]
             [bot.report-preview :as preview]
+            [bot.source-sections :as sections]
+            [bot.source-preview :as source-preview]
             [clojure.string :as str]))
 
 (def help-text
@@ -13,11 +15,14 @@
        "npm run build:dry-run\n"
        "OPENAI_API_KEY=... npm run dry-run -- [options]\n\n"
        "  --count N        Latest N reports, default 1 (maximum 20)\n"
+       "  --url URL        One BEU report detail page or PDF URL\n"
        "  --manifest FILE  JSON array of report metadata, optionally with pdf-path\n"
        "  --out DIR        Output directory, default reports/ai-preview\n"
        "  --model NAME     OpenAI vision model, default gpt-4.1-mini\n"
        "  --refresh        Regenerate even if a matching cached draft exists\n"
        "  --help           Show this help\n\n"
+       "Run npm run setup:preview once for font repair. Text is copied programmatically;\n"
+       "AI selects images and only shortens text when necessary.\n"
        "Model can also be set with OPENAI_MODEL. Mastodon limits are read publicly\n"
        "from MASTO_BASE_URI (default https://zug.network). No access token needed.\n"))
 
@@ -29,7 +34,7 @@
       (cond
         (= arg "--help") (assoc opts :help? true)
         (= arg "--refresh") (recur (rest remaining) (assoc opts :refresh? true))
-        (contains? #{"--count" "--out" "--model" "--manifest"} arg)
+        (contains? #{"--count" "--out" "--model" "--manifest" "--url"} arg)
         (let [value (second remaining)]
           (when (or (str/blank? value) (str/starts-with? value "--"))
             (throw (ex-info (str "Missing value for " arg) {})))
@@ -42,7 +47,10 @@
                             n)
                           value))))
         :else (throw (ex-info (str "Unknown option: " arg) {})))
-      opts)))
+      (do
+        (when (and (:url opts) (:manifest opts))
+          (throw (ex-info "Use either --url or --manifest" {})))
+        opts))))
 
 (defn validate-report [report]
   (when-not (and (re-matches #"\[id:[a-zA-Z0-9_-]{10}\]" (or (:report-id report) ""))
@@ -53,36 +61,34 @@
     (throw (ex-info "Invalid report metadata; see the README manifest example" {})))
   report)
 
-(defn reports+ [{:keys [manifest count]}]
-  (if manifest
+(defn reports+ [{:keys [manifest count url]}]
+  (cond
+    url (-> (beu/report-from-url+ url) (.then #(vector (validate-report %))))
+    manifest
     (-> (fs/readFile manifest "utf8")
         (.then (fn [text]
                  (let [reports (js->clj (.parse js/JSON text) :keywordize-keys true)]
                    (when-not (vector? reports)
                      (throw (ex-info "Manifest must be a JSON array" {})))
                    (mapv validate-report (take count reports))))))
-    (-> (js/Promise.all [(beu/fetch-reports+ "Untersuchungsbericht")
-                         (beu/fetch-reports+ "Zwischenbericht")])
-        (.then #(->> % (mapcat identity)
-                     (sort-by (fn [report] (date/german->iso (:report-date report))))
-                     reverse (take count)))
-        (.then beu/fetch-reports-details+)
-        (.then #(mapv validate-report %)))))
+    :else (-> (js/Promise.all [(beu/fetch-reports+ "Untersuchungsbericht")
+                               (beu/fetch-reports+ "Zwischenbericht")])
+              (.then #(->> % (mapcat identity)
+                           (sort-by (fn [report] (date/german->iso (:report-date report))))
+                           reverse (take count)))
+              (.then beu/fetch-reports-details+)
+              (.then #(mapv validate-report %)))))
 
 (def json preview/json)
 (def write-json+ preview/write-json+)
 (def read-json-if-present+ preview/read-json-if-present+)
-(def prepare-pdf+ preview/prepare-pdf+)
-(def cache-key preview/cache-key)
-(def generate-fitting+ preview/generate-fitting+)
-(def cached-generation+ preview/cached-generation+)
 
 (defn escape-html [value]
   (-> (str value) (str/replace "&" "&amp;") (str/replace "<" "&lt;")
       (str/replace ">" "&gt;") (str/replace "\"" "&quot;")
       (str/replace "'" "&#39;")))
 
-(defn page-html [{:keys [page image-path text alt image-description reason]}]
+(defn page-html [{:keys [page image-path text raw-text alt image-description reason]}]
   (str "<figure><a href=\"" (escape-html (last (str/split image-path #"/")))
        "\"><img loading=\"lazy\" src=\"" (escape-html (last (str/split image-path #"/")))
        "\" alt=\"" (escape-html (or alt text)) "\"></a><figcaption>PDF page " page
@@ -90,6 +96,8 @@
        (when-not (str/blank? image-description)
          (str "<p>Bildbeschreibung: " (escape-html image-description) "</p>"))
        "<details><summary>Full page text</summary><pre>" (escape-html text) "</pre></details>"
+       (when raw-text (str "<details><summary>Original page text before repair</summary><pre>" (escape-html raw-text) "</pre></details>"))
+       (when alt (str "<details><summary>Full image alt text</summary><pre>" (escape-html alt) "</pre></details>"))
        "</figure>"))
 
 (defn post-html [platform post]
@@ -113,7 +121,7 @@
          (when (seq (:dropped-tags post))
            (str "<p>Dropped tags: " (escape-html (str/join ", " (:dropped-tags post))) "</p>")))))
 
-(defn comparison-html [{:keys [report baseline ai model cached? validation-errors]}]
+(defn comparison-html [{:keys [report baseline ai model cached? validation-errors source-sections raw-source-sections text-policy]}]
   (str "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
        "<title>BEU preview comparison</title><style>"
@@ -132,9 +140,34 @@
          (str "<section class=\"error\"><h2>AI proposal rejected — not a valid draft</h2><p>"
               (escape-html (str/join "; " validation-errors))
               "</p><p>The comparison below is for diagnosis only. Saved attempt JSON files contain the model outputs.</p></section>"))
+       (when source-sections
+         (str "<section><h2>Original report sections</h2>"
+              "<p>Repaired source extraction, with page headers, footers and figure captions removed for composition. "
+              "Known glyphs are repaired; unfamiliar fonts can still contain extraction errors.</p>"
+              (str/join (map (fn [{:keys [title text pages]}]
+                               (str "<h3>" (escape-html title) "</h3>"
+                                    (if (seq pages)
+                                      (str "<p>"
+                                           (str/join " · " (map #(str "<a href=\"report.pdf#page=" % "\">PDF page " % "</a>") pages))
+                                           "</p><pre>" (escape-html text) "</pre>")
+                                      "<p>Section not found automatically. Please check the source PDF.</p>")))
+                             source-sections)) "</section>"))
+       (when raw-source-sections
+         (str "<details><summary>Original extraction before font repair</summary>"
+              (str/join (map #(str "<h3>" (escape-html (:title %)) "</h3><pre>" (escape-html (:text %)) "</pre>")
+                             raw-source-sections)) "</details>"))
+       (when (:repair report)
+         (str "<p>Font repair: " (-> report :repair :mappings-added) " missing mappings restored; " (-> report :repair :mappings-corrected) " existing symbol mappings corrected. "
+              "Full repaired page text is used in image alt text. "
+              "<a href=\"" (escape-html (str (last (butlast (str/split (:repaired-pdf-path report) #"/"))) "/repaired.pdf"))
+              "\">Repaired PDF copy</a></p>"))
+       (when text-policy
+         (str "<p>Text: " (if (= "shortened" (name (:mode text-policy))) "AI shortened because the original exceeded the platform limit"
+                              "copied programmatically from the repaired source")
+              ". Folgen: " (if (:included-consequences? text-policy) "included" "omitted") ".</p>"))
        "<main><section><h2>Current bot</h2><p>Original template with the full URL, before link shortening.</p>"
        (str/join (map (fn [[platform post]] (post-html platform post)) (:posts baseline)))
-       (str/join (map page-html (:pages baseline))) "</section><section><h2>AI proposal</h2>"
+       (str/join (map page-html (:pages baseline))) "</section><section><h2>New preview · source text + AI images</h2>"
        (str/join (map (fn [[platform post]] (post-html platform post)) (:posts ai)))
        (str/join (map page-html (:pages ai))) "<h3>Supporting quotations</h3>"
        (str/join (map (fn [{:keys [claim page quote]}]
@@ -184,7 +217,9 @@
         baseline (pdf/select-interesting-pages+ prepared)]
     (-> (render-comparison+ baseline proposed)
         (.then (fn [[baseline proposed]]
-                 (let [comparison {:report (dissoc prepared :pages) :model (:model opts)
+                 (let [comparison {:source-sections (sections/extract-clean prepared)
+                                   :raw-source-sections (sections/extract (assoc prepared :pages (:raw-pages prepared)))
+                                   :report (dissoc prepared :pages :raw-pages) :model (:model opts)
                                    :accepted? false :validation-errors errors :limits limits
                                    :usage (:usage generated) :attempt-usages (:attempt-usages generated)
                                    :baseline {:posts (original-posts prepared limits)
@@ -203,20 +238,22 @@
         directory (str (:out opts) "/" id)
         prepared-state (atom nil)]
     (js/console.log (str "Preparing " (:event-location report) " (" id ")"))
-    (-> (prepare-pdf+ report directory)
+    (-> (source-preview/prepare+ report directory)
         (.then (fn [prepared]
                  (reset! prepared-state prepared)
-                 (-> (cached-generation+ prepared limits opts directory)
-                     (.then (fn [{:keys [result posts usage attempt-usages cached? response-id]}]
+                 (-> (source-preview/cached-generation+ prepared limits opts directory)
+                     (.then (fn [{:keys [result posts usage attempt-usages cached? response-id text-policy]}]
                               (let [baseline (pdf/select-interesting-pages+ prepared)
                                     proposed (assoc prepared :interesting-pages
                                                     (selected-pages prepared (:pages result)))]
                                 (-> (render-comparison+ baseline proposed)
                                     (.then (fn [[baseline proposed]]
-                                             (let [comparison {:report (dissoc prepared :pages)
+                                             (let [comparison {:source-sections (sections/extract-clean prepared)
+                                                               :raw-source-sections (sections/extract (assoc prepared :pages (:raw-pages prepared)))
+                                                               :report (dissoc prepared :pages :raw-pages)
                                                                :model (:model opts) :cached? cached? :accepted? true
                                                                :limits limits :usage usage :attempt-usages attempt-usages
-                                                               :response-id response-id
+                                                               :response-id response-id :text-policy text-policy
                                                                :baseline {:posts (original-posts prepared limits)
                                                                           :pages (:interesting-pages baseline)}
                                                                :ai {:posts posts :pages (:interesting-pages proposed)

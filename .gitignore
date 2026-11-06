@@ -13,3 +13,10 @@ public/js
 /reports/*.png
 /reports/*.jpg
 /reports/ai-preview/
+
+/reports/source-preview/
+
+/reports/text-repair/
+/scripts/__pycache__/
+
+/.venv-pdf/

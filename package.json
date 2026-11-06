@@ -9,7 +9,11 @@
     "dry-run": "node target/dry-run/main.js",
     "test:dry-run": "shadow-cljs compile dry-run-test && node target/dry-run-test/main.js",
     "fmt": "clojure -M:cljfmt-fix && clojure -M:nsorg-fix src",
-    "lint": "clojure -M:lint"
+    "lint": "clojure -M:lint",
+    "preview:source": "node scripts/source-preview.mjs",
+    "preview:report": "npm run build:dry-run && node target/dry-run/main.js --url",
+    "setup:preview": "npm run setup:pdf",
+    "setup:pdf": "python3 -m venv .venv-pdf && .venv-pdf/bin/pip install -r scripts/requirements-pdf-repair.txt"
   },
   "devDependencies": {
     "shadow-cljs": "^2.28.21"

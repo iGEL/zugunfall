@@ -10,6 +10,7 @@
    [bot.post-draft :as draft]
    [bot.report :as report]
    [bot.report-preview :as preview]
+   [bot.source-preview :as source-preview]
    [clojure.string :as string]))
 
 (def env (or (-> js/process .-env .-ENV)
@@ -50,17 +51,17 @@
 
 (defn prepare-report+ [report limits opts]
   (let [directory (str (:out opts) "/" (subs (:report-id report) 4 14))]
-    (log (str "Preparing AI post for " (:report-id report)))
-    (-> (preview/prepare-pdf+ report directory)
+    (log (str "Preparing source-text post for " (:report-id report)))
+    (-> (source-preview/prepare+ report directory)
         (.then (fn [prepared]
-                 (-> (preview/cached-generation+ prepared limits opts directory)
+                 (-> (source-preview/cached-generation+ prepared limits opts directory)
                      (.then (fn [{:keys [result posts] :as generated}]
                               (-> (pdf/add-screenshots+
                                    (assoc prepared :posts posts :limits limits
                                           :interesting-pages (preview/selected-pages prepared (:pages result))))
                                   (.then (fn [ready]
                                            (-> (preview/write-json+ (str directory "/publishing.json")
-                                                                    {:report (dissoc ready :pages)
+                                                                    {:report (dissoc ready :pages :raw-pages)
                                                                      :generation generated
                                                                      :model (:model opts)})
                                                (.then (constantly ready))))))))))))))

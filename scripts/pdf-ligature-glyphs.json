@@ -1,0 +1,92 @@
+{
+  "method": "sha256(unitsPerEm, advance width, decomposed drawing commands); visually verified regular Calibri ligatures and SymbolMT bullet; replace lists explicitly permit only verified previous Unicode values",
+  "glyphs": {
+    "e00be77742433fac0f9f8a5568fefc5c703d5f9a1f43308262d311208e7c3e9c": {
+      "text": "fb",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 297
+    },
+    "70a1b87ed14441eaec8bdd8454e2d271beced8ea815b4b8bd6bcb68b4b38e757": {
+      "text": "ffb",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 298
+    },
+    "9120764eaa5ac938aacc5f696fde2f11ae2df005dafebbd11471decaf8f01489": {
+      "text": "ff",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 299
+    },
+    "24a303e9c79e82c6872a6131d639474fab9cd4a9964f48be014eeb8299b1d77a": {
+      "text": "fk",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 325
+    },
+    "47459daac60f9e1e3f517752773c7dd1ed42c3f17fcc051ec9490f62383db9ca": {
+      "text": "ffl",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 331
+    },
+    "6bf6de48f99848b3858c79b39e5f19656822241218bb0c4211219ce4629df239": {
+      "text": "ft",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 332
+    },
+    "a09394883b5563865a22486d967f023abd240eff5c27fd99e5af0ed346a9c58c": {
+      "text": "fft",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 335
+    },
+    "043220bcf0602023939bd6acf57e9231dae5f18847e9bc1511c46435f94f7604": {
+      "text": "tf",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 414
+    },
+    "cae0f4d872d6000ece4627d3c4d0350f001b4107cee4c0eba7930c0370d4e655": {
+      "text": "ti",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 415
+    },
+    "026c58ed55269f2255bbfdd26280f7e309f39967469b5c86854670562e31db17": {
+      "text": "tt",
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHFAD+Calibri",
+      "reference-gid": 425
+    },
+    "acdb3c113f9b44ee0450dabac3d312158e43ed97e103d2d38565f8634d412cbc": {
+      "text": "fh",
+      "verified-from-report": "Jtk9TNZP0k",
+      "font": "/PBIHPL+Calibri",
+      "reference-gid": 300
+    },
+    "8db988b04697ef0e1be10657580a29b5d17134e1a27f0ab23f649faef0db71f5": {
+      "text": "ttf",
+      "verified-from-report": "Jtk9TNZP0k",
+      "font": "/PBIHPL+Calibri",
+      "reference-gid": 426
+    },
+    "9159aa8035fff8d5db9d38a0bca634e2dfa2c379cebcf92019c45f3f7cb39156": {
+      "text": "tti",
+      "verified-from-report": "54OO0jJ5MN",
+      "font": "/DODPNN+Calibri",
+      "reference-gid": 427
+    },
+    "a9af3b67911f8ca0951df17f61ca86f7b7111fdc2038d3d1000310f1df71763c": {
+      "text": "•",
+      "replace": [
+        ""
+      ],
+      "verified-from-report": "2CqYre6vc1",
+      "font": "/ECHMPK+SymbolMT",
+      "reference-gid": 120
+    }
+  }
+}

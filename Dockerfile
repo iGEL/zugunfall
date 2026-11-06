@@ -4,7 +4,7 @@ ENV CLOJURE_VERSION=1.12.0.1530
 ENV APP_DIR=/zugunfall
 
 RUN apt-get update \
-  && apt-get -q -y install openjdk-17-jdk curl poppler-utils
+  && apt-get -q -y install openjdk-17-jdk curl poppler-utils python3 python3-venv
 
 RUN curl -s https://download.clojure.org/install/linux-install-${CLOJURE_VERSION}.sh | bash
 
@@ -13,9 +13,11 @@ WORKDIR $APP_DIR
 
 COPY deps.edn package.json shadow-cljs.edn yarn.lock $APP_DIR
 COPY src $APP_DIR/src
+COPY scripts $APP_DIR/scripts
 
 RUN cd $APP_DIR \
   && yarn install \
+  && yarn setup:pdf \
   && yarn build
 
 CMD ["node", "/zugunfall/target/app.js"]

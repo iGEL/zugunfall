@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BEU · Textvergleich</title>
+<style>
+*{box-sizing:border-box}body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#f3f5f7;color:#17212d}header,main{max-width:1450px;margin:auto;padding:24px}header p{max-width:950px}h1{margin-bottom:8px}nav{display:flex;flex-wrap:wrap;gap:10px}a{color:#1556a0}nav a,button{background:white;border:1px solid #b9c6d3;border-radius:6px;padding:8px 12px}article{scroll-margin-top:12px;margin-bottom:40px}.columns{display:grid;grid-template-columns:1fr 1fr;gap:20px}.card{background:white;border:1px solid #d8e0e7;border-radius:10px;padding:20px;min-width:0}textarea{display:block;width:100%;font:inherit;line-height:1.5;border:1px solid #aab8c6;border-radius:6px;padding:10px;resize:vertical;margin:6px 0 14px}label{display:block}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;padding:14px;background:#f3f5f7;border-radius:6px}button{cursor:pointer;font:inherit}.status{font-size:14px;color:#24613a}.error{color:#b12121}.notice{background:#fff4d5;padding:12px 16px;border-radius:8px}.images{display:flex;gap:12px;overflow:auto;margin-top:15px}.images img{height:240px;max-width:350px;object-fit:contain;background:white}figure{margin:0}figcaption{font-size:13px}summary{cursor:pointer}h3{margin-bottom:8px}@media(max-width:850px){.columns{grid-template-columns:1fr}header,main{padding:16px}}
+</style>
+<header><h1>BEU · Textvergleich</h1><p>Vorherige KI-Texte neben einer neuen Variante mit fester Überschrift und möglichst wörtlicher Ereignisbeschreibung. Texte sind direkt editierbar; „Folgen“ lassen sich zuschalten. Zeichenlimits, optionale Hashtags und Link werden bei jeder Änderung neu berechnet.</p>
+<p class="notice">Lokale Textvorschau aus gespeicherten PDFs, ohne neue KI-Anfrage. Fehlende Buchstaben der Textextraktion wurden für diese fünf Beispiele an den sichtbaren PDF-Seiten geprüft und korrigiert; reine Abbildungsverweise wurden entfernt. Die Rohtexte stehen im Quellenvergleich. Die automatische KI-Kürzung wurde hier nicht ausgeführt; keiner dieser Texte überschreitet das Mastodon-Limit. Die Bildauswahl stammt aus der bisherigen Vorschau.</p><nav id="nav"></nav></header><main id="reports"></main>
+<script>
+const reports = /*REPORT_DATA*/[];
+const segmenter = new Intl.Segmenter('de', {granularity:'grapheme'});
+const length = text => [...segmenter.segment(text)].length;
+const bytes = text => new TextEncoder().encode(text).length;
+const el = (tag, text, parent, className) => {const node=document.createElement(tag);if(text!==null)node.textContent=text;if(className)node.className=className;if(parent)parent.append(node);return node;};
+for(const item of reports){
+ const nav=el('a',item.report['event-location'],document.querySelector('#nav'));nav.href='#'+item.id;
+ const article=el('article',null,document.querySelector('#reports'));article.id=item.id;
+ el('h2',item.title,article);
+ const links=el('p',null,article);
+ for(const [label,href] of [['Quell-PDF',item.pdf],['Bisherige vollständige Vorschau',item.previous]]){const a=el('a',label,links);a.href=href;links.append(' · ');}
+ const columns=el('div',null,article,'columns');const old=el('section',null,columns,'card');el('h3','Bisherige KI-Texte',old);
+ for(const platform of ['mastodon','bluesky']){el('h4',platform==='mastodon'?'Mastodon':'Bluesky',old);el('pre',item.old[platform].text,old);}
+ const fresh=el('section',null,columns,'card');el('h3','Neue Variante · Originalwortlaut',fresh);
+ function field(label,text,rows){const labelEl=el('label',label,fresh);const input=el('textarea',text,labelEl);input.rows=rows;return input;}
+ const headline=field('Überschrift (beide Plattformen)',item.title,2);
+ const body=field('Ereignisbeschreibung · PDF-Seite '+item.summary.page,item.summary.text,7);
+ const consequences=field('Folgen'+(item.consequences?' · PDF-Seite '+item.consequences.page:''),item.consequences?.text||'',4);
+ const label=el('label',null,fresh);const toggle=el('input',null,label);toggle.type='checkbox';label.append(' Folgen ergänzen');
+ toggle.checked=!!item.consequences && length(body.value+'\n\n'+consequences.value)<=1500;
+ const policy=el('p',null,fresh,'status');const outputs=[];
+ for(const platform of ['mastodon','bluesky']){el('h4',platform==='mastodon'?'Mastodon':'Bluesky · nur Überschrift',fresh);const pre=el('pre','',fresh);const status=el('p','',fresh,'status');const copy=el('button','Text kopieren',fresh);copy.type='button';copy.onclick=async()=>{try{await navigator.clipboard.writeText(pre.textContent);copy.textContent='Kopiert';}catch{const selection=window.getSelection();const range=document.createRange();range.selectNodeContents(pre);selection.removeAllRanges();selection.addRange(range);copy.textContent='Text markiert · Strg/Cmd+C';}};outputs.push({platform,pre,status});}
+ function update(){
+  policy.textContent='Automatik: Folgen bis 1.500 Zeichen Gesamttext; längere Ereignisbeschreibungen bleiben bis zum Plattformlimit vollständig. Auswahl hier manuell änderbar.';
+  for(const {platform,pre,status} of outputs){
+   const textBody=platform==='bluesky'?headline.value.trim():[headline.value.trim(),body.value.trim(),toggle.checked?consequences.value.trim():''].filter(Boolean).join('\n\n');
+   const link=platform==='bluesky'?'BEU-Bericht':item.report['report-overview-uri'];const tags=[...item.report.post.tags];
+   const compose=()=>textBody+'\n'+link+'\n'+tags.map(t=>'#'+t).concat(item.report['report-id']).join(' ');
+   const count=text=>platform==='bluesky'?length(text):length(text)-length(link)+item.limits.characters_reserved_per_url;
+   const max=platform==='bluesky'?300:item.limits.max_characters;
+   let text=compose();while(tags.length && (count(text)>max || platform==='bluesky'&&bytes(text)>3000)){tags.pop();text=compose();}
+   pre.textContent=text;const fits=count(text)<=max&&(platform!=='bluesky'||bytes(text)<=3000);
+   status.className=fits?'status':'status error';status.textContent=`${count(text)} / ${max} Zeichen`+(platform==='bluesky'?` · ${bytes(text)} / 3000 Bytes`:'')+` · ${item.report.post.tags.length-tags.length} Hashtags entfernt`+(fits?' · passt':' · zu lang: KI-Kürzung erforderlich; kein Text abgeschnitten');
+  }
+ }
+ for(const input of [headline,body,consequences,toggle])input.addEventListener('input',update);update();
+ const raw=el('details',null,article);el('summary','Quellenvergleich · unbearbeitete Textextraktion',raw);el('pre',item.summary.extracted||item.summary.text,raw);if(item.consequences)el('pre',item.consequences.extracted||item.consequences.text,raw);
+ const details=el('details',null,article);el('summary','Bisherige Bildauswahl ansehen',details);const images=el('div',null,details,'images');
+ for(const image of item.images){const fig=el('figure',null,images);const a=el('a',null,fig);a.href=image.src;const img=el('img',null,a);img.src=image.src;img.loading='lazy';img.alt=image.reason;el('figcaption','PDF-Seite '+image.page,fig);}
+}
+</script></html>

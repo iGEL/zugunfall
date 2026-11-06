@@ -1,0 +1,3 @@
+-r requirements-pdf-repair.txt
+pdfminer.six==20260107
+pymupdf==1.26.7
