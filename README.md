@@ -40,7 +40,7 @@ The bot uses
 
 Run `docker start zugunfall`
 
-Publishing and previews use the same source-text pipeline: programmatic headlines,
+Publishing and previews use the same text and image pipeline: programmatic headlines,
 repaired event descriptions and optional “Folgen”, repaired full-page image alt
 text, and AI image selection. AI shortens Mastodon text only when the complete
 post still exceeds the instance limit after optional hashtags are removed.
@@ -66,8 +66,10 @@ reports remain skipped independently on each platform. Network failures during
 publishing can still leave a report posted to only one platform; the next run uses
 the existing report IDs to retry only the missing platform.
 
-Publishing shares `reports/ai-preview/<report-id>/source-cache-*.json` with previews
-when the original PDF, repaired text, metadata, model, prompts and limits match.
+Publishing writes `reports/ai-preview/<report-id>/source-cache-*.json`, keyed by
+the original PDF, repaired text, metadata, model, prompts and limits. Publishing
+and previews share validated selections, including focus points, when these inputs
+match. Cache entries from the previous image-selection policy are not reused.
 Old `cache-*.json` drafts from the previous full AI summarization pipeline are not
 used. Publishing saves the exact prepared drafts, selected pages, and generation details to `publishing.json`;
 it does not create or update the comparison HTML. Keep the reports volume mounted
@@ -86,10 +88,50 @@ for this separate media-description limit.
 The preview tool repairs known missing PDF font mappings, extracts the event
 description and consequences, and composes messages programmatically. It never
 publishes, reads social accounts or refreshes tokens, even with `ENV=prod`.
-The same preparation code is used by publishing; the preview adds comparison HTML.
+Text preparation, image selection, per-page verification and focal points are shared
+with publishing.
+
+The bot and preview always select page 1 and the programmatically detected event-summary
+page. AI supplies candidates for a summary (used only if detection fails), an incident
+overview photo page, and a geographic location map. Overview photos are preferred over
+technical detail photos. Missing photo/map roles are returned as null, without
+substitute diagrams. The application fills vacant slots with pages immediately after
+the summary, skips duplicates, and sorts the final selection by physical PDF page.
+A photo candidate on a page without embedded raster images is rejected and retried.
+Raster presence is a necessary check, not proof that an image is a suitable photo.
+The shared pipeline independently checks each selected page in a separate, single-image
+AI request. It asks whether an actual incident photo and a location map are visible,
+with independent flags: a chart and a good photo on the same page remain eligible.
+If no verified overview photo or map was found, it checks other raster-bearing
+pages and pages with location-map captions, up to three requests concurrently.
+Verified photos are ranked by overview value (detail photos rank lower); ties use
+PDF order. Final image descriptions come from those page-bound checks, rather
+than the whole-report guesses. The HTML includes the original proposal and all
+single-page findings so mismatches can be reviewed. This is still model-based
+visual classification, not a deterministic guarantee that every description is right.
+The per-page checks also return the center of the best incident photo and the
+incident location within the map, normalized against the entire page (top-left
+`0,0`, bottom-right `1,1`). The HTML marks the selected focus and shows an example
+16:9 crop; clients may use other crop sizes. Photo focus wins if one page serves
+both photo and map roles. Fixed or fallback pages without these roles have no focus.
+Mastodon uploads accept these points and convert them to its `-1..1` coordinate
+system, reversing the vertical axis. The full image is retained. Bluesky's image
+embed has no focal-point field, so it receives the full page without focus metadata.
+The bot sends the selected focus point with each applicable Mastodon upload.
+
+It selects up to four pages, subject to the report length and attachment limit; it
+never fills from arbitrary earlier pages when the summary is near the end.
+
+The HTML shows the AI role candidates and final page reasons/roles. Image descriptions
+for fixed and fallback pages come from their individual visual checks; repaired
+full-page text still supplies the rest of the alt text. When no event-description section can
+be extracted, the preview can still test AI summary-page selection, but displays a
+prominent warning and a headline-only Mastodon draft for image review. Publishing
+continues to reject missing event-description text, including when a matching
+headline-only image-review draft is already cached.
 
 Install the Node dependencies, Java/Clojure build tools, Poppler (`pdfinfo`,
-`pdftotext`, `pdftoppm`) and Python 3.11+, then set up the repair dependencies once:
+`pdftotext`, `pdftoppm`, `pdfimages`) and Python 3.11+, then set up the repair dependencies once:
 
 ```sh
 npm run setup:preview
@@ -104,6 +146,9 @@ Pass your API key and a BEU report detail page or PDF URL:
 ```sh
 OPENAI_API_KEY='your-key' npm run preview:report -- 'https://www.eisenbahn-unfalluntersuchung.de/SharedDocs/Downloads/BEU/Zwischenberichte/2025/111_Zwischenbericht_Emmerich.html'
 ```
+
+To keep an earlier preview for comparison, add
+`--out reports/ai-preview/image-selection` to the command.
 
 The command builds and runs the preview. It prints the path to
 `reports/ai-preview/<report-id>/index.html`. Open it to compare:
@@ -122,13 +167,15 @@ consequences total at most 1,500 graphemes and fit the complete status budget,
 “Folgen” is added as a separate paragraph. Longer descriptions remain complete if
 they fit. Optional tags are removed before requesting shortening.
 
-AI is always used for image selection and visual descriptions. Its image schema
-contains only `pages`; it does not compose the post text. Only if the source text
+AI is always used for image selection and visual descriptions. Both publishing
+and previews use the same `summary`, `photo`, `map`, and page `descriptions` schema,
+followed by individual visual checks and focus-point selection. Neither composes
+post text. Only if the source text
 exceeds Mastodon's budget is a separate text-only AI request made to remove less
 relevant details while preserving wording, key facts and qualifications. The
 headline is added by the application afterwards, so AI cannot change it. AI never
 rewrites the full page text used in alt text. A missing event-description section
-or an oversized Bluesky headline is rejected explicitly, with no AI fallback.
+is rejected in publishing; an oversized Bluesky headline is rejected in both flows.
 
 Bullet lists are preserved in copied posts and full page alt text. The verified
 SymbolMT bullet mapping (`U+F0B7`, a private-use character) is corrected to `•`.
@@ -146,17 +193,23 @@ page text is retained for alt text, including material outside the summary.
 
 The HTML and `comparison.json` contain the accepted drafts, source sections,
 selected pages, text policy and model-attempt usage. There are at most three
-attempts per AI stage (image selection and, only when needed, shortening), at most
-six calls per report. Attempts are saved as `source-attempt-*.json`. Invalid
-results produce a rejection review and a nonzero exit status. Review shortened
+attempts per request: whole-report image proposal, optional shortening, and each
+single-page visual check. Visual checks can add one request per inspected page;
+the upper bound is `6 + 3 × physical PDF page count`, including retries. Each page
+is checked once within a generation and accepted results are cached. Attempts are
+saved as `source-attempt-*.json`. Invalid results produce a rejection review and
+a nonzero exit status. Review shortened
 text against the source; length and structure checks do not prove semantic fidelity.
 
 The default model remains `gpt-4.1-mini`; use `--model MODEL` or `OPENAI_MODEL` to
 change it. Requests use `store: false`; image selection has a 4,000 output-token
-cap, shortening 6,000. AI requests can incur charges. The selection request sends
-the source PDF; shortening sends only the copied event-description text.
+cap, shortening 6,000, and single-page checks 1,000. AI requests can incur charges. The selection request sends
+individual JPEG page images in both publishing and previews,
+each immediately preceded by an explicit physical PDF page label; printed page
+numbers and figure-list references are not used as page identities. Shortening
+sends only the copied event-description text.
 
-Matching results are cached together with publishing, keyed by original PDF,
+Matching results are cached by image policy, keyed by original PDF,
 repaired page text, metadata, model, prompts/schema, composition version and
 platform limits. Rerunning a matching preview needs no key or new AI calls, but
 still performs PDF preparation and reads public report metadata and Mastodon

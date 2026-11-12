@@ -45,6 +45,6 @@
                 alt (if (str/blank? description)
                       (:text page)
                       (str "Bildbeschreibung:\n" description "\n\nText der Seite:\n" (:text page)))]
-            (merge page (select-keys selection [:page :reason])
+            (merge page (select-keys selection [:page :reason :roles :focus])
                    {:image-description description :alt alt})))
         selections))

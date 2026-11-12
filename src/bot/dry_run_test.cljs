@@ -1,6 +1,8 @@
 (ns bot.dry-run-test
   (:require ["fs/promises" :as fs]
             [bot.ai :as ai]
+            [bot.image-selection :as images]
+            [bot.image-focus :as focus]
             [bot.beu :as beu]
             [bot.bsky :as bsky]
             [bot.dry-run :as dry]
@@ -146,6 +148,7 @@
   (let [opts {:model "model-a"}
         key (source-preview/cache-key (assoc report :pdf-content-hash "pdf") limits opts)]
     (is (not= key (source-preview/cache-key (assoc report :pdf-content-hash "pdf") limits {:model "model-b"})))
+    (is (not= key (source-preview/cache-key (assoc report :pdf-content-hash "pdf") limits (assoc opts :image-policy :roles))))
     (is (not= key (source-preview/cache-key (assoc report :pdf-content-hash "changed-pdf") limits opts)))
     (is (not= key (source-preview/cache-key (assoc report :pdf-content-hash "pdf") (assoc limits :max_characters 500) opts)))
     (is (not= key (source-preview/cache-key (assoc report :pdf-content-hash "pdf" :pages [{:page 1 :text "Repaired source"}]) limits opts))))
@@ -234,6 +237,39 @@
   (is (= "• erster Punkt\n▪ zweiter Punkt"
          (sections/prose "• erster Punkt\n▪\n\nzweiter Punkt"))))
 
+(deftest role-based-image-resolution
+  (let [report (assoc source-report :page-count 10 :pages [{:page 5 :text (:text (first (:pages source-report)))}])
+        page (fn [n] {:page n :reason "Candidate" :image-description "Visible content"})
+        candidates {:summary (page 2) :photo (page 9) :map (page 7) :descriptions []}
+        selected #(images/resolve-pages report limits %)]
+    (is (= 5 (images/summary-page report)))
+    (is (= [1 5 7 9] (mapv :page (selected candidates))))
+    (is (= [1 5 6 9] (mapv :page (selected (assoc candidates :map nil)))))
+    (is (= [1 5 6 7] (mapv :page (selected (assoc candidates :photo nil :map nil)))))
+    (is (= [1 5 6 7] (mapv :page (selected (assoc candidates :photo (page 5) :map (page 5))))))
+    (is (= [1 5] (mapv :page (images/resolve-pages report (assoc limits :max_media_attachments 2) candidates))))
+    (is (= [1 2 7 9] (mapv :page (images/resolve-pages (assoc report :pages []) limits candidates))))
+    (is (seq (images/errors (assoc candidates :photo (page 11)) report))))
+  (let [page {:page 1 :reason "Only page" :image-description ""}
+        candidates {:summary page :photo nil :map nil :descriptions [{:page 1 :image-description ""}]}]
+    (is (= [1] (mapv :page (images/resolve-pages source-report limits candidates))))
+    (is (empty? (images/errors candidates source-report)))
+    (is (seq (images/errors (assoc candidates :summary nil) (assoc source-report :pages [])))))
+  (is (:missing-source? (source-preview/text-plan report limits true))))
+
+(deftest photo-selection-needs-image-content
+  (let [inventory "page num type width height\n 16 0 image 945 659\n 19 1 image 946 553\n 19 2 smask 946 553\n 20 3 mask 200 100\n 19 4 image 946 399"
+        report (assoc source-report :page-count 64 :pages [{:page 9 :text (-> source-report :pages first :text)}]
+                      :raster-image-pages (images/raster-pages inventory))
+        candidate {:summary {:page 9 :reason "Summary" :image-description ""}
+                   :photo {:page 18 :reason "Luftbild der Unfallstelle" :image-description "Fotos der Unfallstelle."}
+                   :map {:page 16 :reason "Lageplan" :image-description "Karte der Unfallstelle."}
+                   :descriptions (mapv #(hash-map :page % :image-description "") [1 9 10 11 12])}]
+    (is (= #{16 19} (:raster-image-pages report)))
+    (is (some #(str/includes? % "page 18 contains no embedded images") (images/errors candidate report)))
+    (is (empty? (images/errors (assoc-in candidate [:photo :page] 19) report)))
+    (is (= [1 9 16 19] (mapv :page (images/resolve-pages report limits (assoc-in candidate [:photo :page] 19)))))))
+
 (deftest conditional-shortening-only
   (async done
          (let [original ai/request+
@@ -270,6 +306,55 @@
                            (if old-key (set! (.. js/process -env -OPENAI_API_KEY) old-key)
                                (js-delete (.-env js/process) "OPENAI_API_KEY")) (done)))))))
 
+(def text-page-finding
+  {:has-incident-photo false :photo-overview-score 0 :has-location-map false
+   :photo-focus nil :map-focus nil :image-description "" :reason "Text only."})
+
+(deftest isolated-photo-verification-allows-mixed-pages
+  (async done
+         (let [report (assoc source-report :page-count 40 :pages [{:page 9 :text (-> source-report :pages first :text)}])
+               candidate (fn [page] {:page page :reason "Whole-report guess" :image-description "Unverified description"})
+               proposed {:summary (candidate 9) :photo (candidate 35) :map (candidate 16)
+                         :descriptions (mapv #(hash-map :page % :image-description "Unverified description") [1 9 10 11 12])}
+               content (vec (mapcat (fn [page] [{:type "input_text" :text (str page)}
+                                                {:type "input_image" :image_url (str "test-page-" page)}]) (range 1 41)))]
+           (-> (reduce (fn [previous mixed?]
+                         (.then previous
+                                (fn []
+                                  (let [checked (atom [])
+                                        request (fn [_ _ body check]
+                                                  (let [input (-> body :input first :content)
+                                                        page (js/parseInt (:text (first input)) 10)
+                                                        finding (cond
+                                                                  (= page 16) (assoc text-page-finding :has-location-map true :map-focus {:x 0.4 :y 0.25} :image-description "Location map.")
+                                                                  (or (= page 19) (and mixed? (= page 35)))
+                                                                  (assoc text-page-finding :has-incident-photo true :photo-overview-score 3 :photo-focus {:x 0.5 :y 0.3}
+                                                                         :reason "Incident overview photo is visible, regardless of the chart."
+                                                                         :image-description "Visible accident photo.")
+                                                                  (= page 35) (assoc text-page-finding :reason "Chart only, no photograph." :image-description "A chart.")
+                                                                  :else text-page-finding)]
+                                                    (swap! checked conj page)
+                                                    (is (= 2 (count input)))
+                                                    (is (= "input_image" (:type (second input))))
+                                                    (is (empty? (check finding)))
+                                          ;; The verifier cannot move its finding to a different page.
+                                                    (js/Promise.resolve (assoc finding :page 999))))]
+                                    (-> (images/verify+ report limits content #{16 19 35} proposed request)
+                                        (.then (fn [{:keys [candidates verifications]}]
+                                                 (let [pages (images/resolve-pages report limits candidates)]
+                                                   (is (= (if mixed? 35 19) (-> candidates :photo :page)))
+                                                   (is (= "" (-> candidates :descriptions first :image-description)))
+                                                   (is (= {:x 0.5 :y 0.3} (-> candidates :photo :focus)))
+                                                   (is (= {:x 0.4 :y 0.25} (-> candidates :map :focus)))
+                                                   (is (images/verified-selection? candidates pages verifications))
+                                                   (is (not (images/verified-selection?
+                                                             (assoc-in candidates [:photo :focus] {:x 0 :y 0}) pages verifications)))
+                                                   (is (= (count @checked) (count (set @checked))))
+                                                   (when mixed? (is (not (some #{19} @checked))))))))))))
+                       (js/Promise.resolve nil) [false true])
+               (.catch #(is false (str %)))
+               (.finally done)))))
+
 (deftest offline-end-to-end
   (async done
          (let [original-request ai/request+
@@ -281,8 +366,11 @@
                    (js/Promise.resolve
                     {:status "completed" :usage {:input_tokens 100 :output_tokens 50}
                      :output [{:content [{:type "output_text"
-                                          :text (dry/json {:pages (if (or @reject-all? (= 1 (count @calls)))
-                                                                    [(assoc (first (:pages result)) :page 99)] (:pages result))})}]}]})))
+                                          :text (dry/json (if (= "verify_report_page" (-> body :text :format :name))
+                                                            text-page-finding
+                                                            {:summary (cond-> (first (:pages result))
+                                                                        (or @reject-all? (= 1 (count @calls))) (assoc :page 99))
+                                                             :photo nil :map nil :descriptions [{:page 1 :image-description ""}]}))}]}]})))
            (set! (.. js/process -env -OPENAI_API_KEY) "offline-key")
            (-> (fs/mkdtemp "/tmp/zugunfall-source-preview-test-")
                (.then (fn [directory]
@@ -293,12 +381,15 @@
                (.then #(dry/preview-one+ (assoc report :pdf-path (str @root "/source.pdf")) limits {:out @root :model "stub"}))
                (.then (fn [saved]
                         (is (:ok? saved))
-                        (is (= ["select_report_images" "select_report_images"] (mapv #(-> % :text :format :name) @calls)))
-                        (is (= #{:pages} (set (keys (-> @calls first :text :format :schema :properties)))))
+                        (is (= ["select_report_images" "select_report_images" "verify_report_page"] (mapv #(-> % :text :format :name) @calls)))
+                        (is (= #{:summary :photo :map :descriptions} (set (keys (-> @calls first :text :format :schema :properties)))))
                         (is (= false (:store (first @calls))))
+                        (is (str/includes? (-> @calls first :input first :content first :text) "PHYSICAL_PDF_PAGE=1"))
+                        (is (= "input_image" (-> @calls first :input first :content second :type)))
+                        (is (str/starts-with? (-> @calls first :input first :content second :image_url) "data:image/jpeg;base64,"))
                         (set! (.. js/process -env -OPENAI_API_KEY) "")
                         (dry/preview-one+ (assoc report :pdf-path (str @root "/source.pdf")) limits {:out @root :model "stub"})))
-               (.then (fn [_] (is (= 2 (count @calls)))
+               (.then (fn [_] (is (= 3 (count @calls)))
                         (dry/read-json-if-present+ (str @root "/0123456789/comparison.json"))))
                (.then (fn [comparison]
                         (is (:cached? comparison)) (is (:accepted? comparison))
@@ -315,12 +406,53 @@
                         (set! (.. js/process -env -OPENAI_API_KEY) "offline-key")
                         (-> (dry/preview-one+ (assoc report :pdf-path (str @root "/source.pdf")) limits {:out @root :model "stub" :refresh? true})
                             (.then #(is false "Invalid page selections must fail"))
-                            (.catch (fn [error] (is (= 5 (count @calls))) (is (str/includes? (ex-message error) "/index.html")))))))
+                            (.catch (fn [error] (is (= 6 (count @calls))) (is (str/includes? (ex-message error) "/index.html")))))))
                (.then #(dry/read-json-if-present+ (str @root "/0123456789/comparison.json")))
                (.then #(is (= false (:accepted? %))))
                (.catch #(is false (str "Offline source preview: " %)))
                (.finally (fn [] (set! ai/request+ original-request)
                            (if original-key (set! (.. js/process -env -OPENAI_API_KEY) original-key)
+                               (js-delete (.-env js/process) "OPENAI_API_KEY")) (done)))))))
+
+(deftest preview-ai-summary-fallback
+  (async done
+         (let [original ai/request+ old-key (.. js/process -env -OPENAI_API_KEY) root (atom nil) calls (atom 0)]
+           (set! (.. js/process -env -OPENAI_API_KEY) "offline-key")
+           (set! ai/request+ (fn [body _]
+                               (swap! calls inc)
+                               (is (contains? #{"select_report_images" "verify_report_page"} (-> body :text :format :name)))
+                               (js/Promise.resolve
+                                {:status "completed" :output [{:content [{:type "output_text"
+                                                                          :text (dry/json (if (= "verify_report_page" (-> body :text :format :name))
+                                                                                            text-page-finding
+                                                                                            {:summary {:page 1 :reason "Best incident overview" :image-description ""}
+                                                                                             :photo nil :map nil :descriptions [{:page 1 :image-description ""}]}))}]}]})))
+           (-> (fs/mkdtemp "/tmp/zugunfall-summary-image-fallback-")
+               (.then (fn [folder] (reset! root folder) (fs/writeFile (str folder "/source.pdf") (sample-pdf))))
+               (.then #(dry/preview-one+ (assoc report :pdf-path (str @root "/source.pdf")) limits {:out @root :model "stub"}))
+               (.then #(dry/read-json-if-present+ (str @root "/0123456789/comparison.json")))
+               (.then (fn [comparison]
+                        (is (= [1] (mapv :page (-> comparison :ai :pages))))
+                        (is (= false (:text-accepted? comparison)))
+                        (is (= "missing-source" (-> comparison :text-policy :mode)))
+                        (fs/readFile (str @root "/0123456789/index.html") "utf8")))
+               (.then (fn [html]
+                        (is (str/includes? html "headline for image review"))
+                        (is (= 2 @calls))
+                        ;; Both a preview cache and fresh generation must retain production's source-text requirement.
+                        (reduce (fn [previous refresh?]
+                                  (.then previous
+                                         (fn []
+                                           (-> (bot/prepare-report+ (assoc report :pdf-path (str @root "/source.pdf")) limits
+                                                                    {:out @root :model "stub" :refresh? refresh? :image-review? true})
+                                               (.then (fn [_] (is false "Missing source text must prevent production preparation")))
+                                               (.catch (fn [error]
+                                                         (is (str/includes? (ex-message error) "Event description section not found"))))))))
+                                (js/Promise.resolve nil) [false true])))
+               (.then (fn [] (is (= 2 @calls) "Production rejects missing source before any AI calls")))
+               (.catch #(is false (str %)))
+               (.finally (fn [] (set! ai/request+ original)
+                           (if old-key (set! (.. js/process -env -OPENAI_API_KEY) old-key)
                                (js-delete (.-env js/process) "OPENAI_API_KEY")) (done)))))))
 
 (deftest publishing-safety-and-alt-limits
@@ -350,7 +482,8 @@
                requests (atom [])
                uploads (atom [])
                published (atom [])
-               description "Eine Skizze zeigt die Unfallstelle."
+               description "Eine Karte zeigt die Unfallstelle."
+               focal-point {:x 0.25 :y 0.3}
                test-limits (assoc limits :description_limit 40)]
            (set! (.. js/process -env -OPENAI_API_KEY) "offline-test-key")
            (set! bot/env "prod")
@@ -378,8 +511,14 @@
                     {:status "completed" :id "publishing-test" :usage {:input_tokens 1 :output_tokens 1}
                      :output [{:content [{:type "output_text"
                                           :text (dry/json
-                                                 {:pages [(cond-> (assoc (first (:pages result)) :image-description description)
-                                                            (= :invalid @scenario) (assoc :page 99))]})}]}]})))
+                                                 (if (= "verify_report_page" (-> body :text :format :name))
+                                                   (assoc text-page-finding :has-location-map true :map-focus focal-point
+                                                          :image-description description)
+                                                   {:summary (cond-> (first (:pages result))
+                                                               (= :invalid @scenario) (assoc :page 99))
+                                                    :photo nil
+                                                    :map {:page 1 :reason "Location map" :image-description description}
+                                                    :descriptions [{:page 1 :image-description description}]}))}]}]})))
            (set! mastodon/upload-media+
                  (fn [media]
                    (swap! uploads conj [:mastodon media])
@@ -412,9 +551,11 @@
                                                                                  "1.2 Folgen" "Niemand wurde verletzt." "1.3 Ursachen" "Andere Details."]))))
                (.then bot/run+)
                (.then (fn [_]
-                        (is (= 1 (count @requests)))
+                        (is (= 2 (count @requests)))
                         (is (= "select_report_images" (-> @requests first :text :format :name)))
-                        (is (= #{:pages} (set (keys (-> @requests first :text :format :schema :properties)))))
+                        (is (= #{:summary :photo :map :descriptions} (set (keys (-> @requests first :text :format :schema :properties)))))
+                        (is (= "verify_report_page" (-> @requests second :text :format :name)))
+                        (is (= "input_image" (-> @requests first :input first :content second :type)))
                         (is (= #{:mastodon :bluesky} (set (map first @published))))
                         (let [masto (->> @published (filter #(= :mastodon (first %))) first last)
                               bsky (get (->> @published (filter #(= :bluesky (first %))) first last) "record")
@@ -427,6 +568,8 @@
                           (is (= (:report-overview-uri report)
                                  (-> bsky (get "facets") first :features first :uri)))
                           (is (= 40 (:description-limit media)))
+                          (is (= focal-point (:focus media)))
+                          (is (not (contains? (-> bsky (get "embed") (get "images") first) "focus")))
                           (is (str/starts-with? (:description media) (str "Bildbeschreibung:\n" description)))
                           (is (str/includes? (:description media) "Ein Zug entgleiste in Teststadt."))
                           (is (= (:description media) (-> bsky (get "embed") (get "images") first (get "alt")))))
@@ -435,6 +578,18 @@
                         (is (-> audit :generation :posts :bluesky :fits?))
                         (is (= "source" (-> audit :generation :text-policy :mode)))
                         (is (-> audit :report :repair))
+                        (is (= "roles" (-> audit :generation :image-policy)))
+                        (is (= focal-point (-> audit :report :interesting-pages first :focus)))
+                        (is (= ["cover" "summary" "map"] (-> audit :report :interesting-pages first :roles)))
+                        (set! (.. js/process -env -OPENAI_API_KEY) "")
+                        (dry/preview-one+ (assoc report :pdf-path (str @root "/source.pdf")) test-limits
+                                          {:out @root :model "offline-model"})))
+               (.then (fn [saved]
+                        (is (:ok? saved))
+                        (dry/read-json-if-present+ (str @root "/0123456789/comparison.json"))))
+               (.then (fn [comparison]
+                        (is (:cached? comparison) "Preview and production share the validated selection cache")
+                        (is (= focal-point (-> comparison :ai :pages first :focus)))
                         (reset! published [])
                         (reset! uploads [])
                         (set! bot/env "dev")
@@ -442,7 +597,7 @@
                (.then (fn [_]
                         (is (empty? @published))
                         (is (empty? @uploads))
-                        (is (= 1 (count @requests)) "Non-prod run reuses the validated cache")
+                        (is (= 2 (count @requests)) "Non-prod run reuses the validated cache")
                         (set! bot/env "prod")
                         (reset! scenario :masto-only)
                         (bot/run+)))
@@ -451,18 +606,19 @@
                         (reset! published [])
                         (reset! uploads [])
                         (reset! scenario :invalid)
+                        (set! (.. js/process -env -OPENAI_API_KEY) "offline-test-key")
                         (-> (bot/run+)
                             (.then (fn [_] (is false "Invalid AI drafts must fail the publishing run")))
                             (.catch (fn [error]
                                       (is (str/includes? (ex-message error) "images rejected")))))))
                (.then (fn [_]
-                        (is (= 4 (count @requests)))
+                        (is (= 5 (count @requests)))
                         (is (empty? @uploads))
                         (is (empty? @published))
                         (reset! scenario :none)
                         (bot/run+)))
                (.then (fn [_]
-                        (is (= 4 (count @requests)) "No new reports means no AI request")
+                        (is (= 5 (count @requests)) "No new reports means no AI request")
                         (is (empty? @uploads))
                         (is (empty? @published))))
                (.catch (fn [error] (is false (str "Publishing integration failed: " (.-stack error)))))
@@ -486,6 +642,68 @@
                              (set! (.. js/process -env -OPENAI_API_KEY) original-key)
                              (js-delete (.-env js/process) "OPENAI_API_KEY"))
                            (done)))))))
+
+(deftest focus-coordinates-and-page-merging
+  (is (= "-1,1" (focus/mastodon {:x 0 :y 0})))
+  (is (= "1,-1" (focus/mastodon {:x 1 :y 1})))
+  (is (= "0,0" (focus/mastodon {:x 0.5 :y 0.5})))
+  (is (= "-0.5,0.5" (focus/mastodon {:x 0.25 :y 0.25})))
+  (doseq [point [nil {} {:x -0.1 :y 0.5} {:x 0 :y 1.1} {:x js/NaN :y 0}
+                 {:x js/Infinity :y 0} {:x "0.5" :y 0.5}]]
+    (is (not (focus/valid? point)))
+    (is (thrown? js/Error (focus/mastodon point))))
+  (let [photo {:x 0.3 :y 0.2} location {:x 0.7 :y 0.6}
+        candidate {:summary {:page 1 :reason "Summary" :image-description ""}
+                   :photo {:page 1 :reason "Photo" :image-description "Photo." :focus photo}
+                   :map {:page 1 :reason "Map" :image-description "Map." :focus location}
+                   :descriptions []}
+        merged (first (images/resolve-pages report limits candidate))
+        selected (first (dry/selected-pages report [merged]))
+        html (dry/page-html (assoc selected :image-path "report.pdf-1.png"))]
+    (is (= ["cover" "summary" "photo" "map"] (:roles merged)))
+    (is (= photo (:focus selected)))
+    (is (= location (:focus (first (images/resolve-pages report limits (assoc candidate :photo nil))))))
+    (is (str/includes? html "focus-marker"))
+    (is (str/includes? html "left:30%;top:20%"))
+    (is (str/includes? html "data-x=\"0.3\" data-y=\"0.2\"")))
+  (is (empty? (images/verification-errors text-page-finding)))
+  (is (seq (images/verification-errors (assoc text-page-finding :has-location-map true))))
+  (is (seq (images/verification-errors (assoc text-page-finding :photo-focus {:x 0 :y 0})))))
+
+(deftest focal-crop-centering-and-edge-clamping
+  (let [html (dry/comparison-html {:report report :baseline {:pages []} :ai {:pages []}})
+        script (second (re-find #"<script>(.*?)</script>" html))
+        render (js/Function. "img" "ResizeObserver" (str script ";previewFocus(img);"))]
+    (doseq [[y expected] [[0 "0px"] [0.5 "-337.5px"] [1 "-675px"]]]
+      (let [img #js {:naturalWidth 600 :naturalHeight 900 :style #js {}
+                     :parentElement #js {:clientWidth 600 :clientHeight 225 :dataset #js {:x "0.5" :y (str y)}}}]
+        (render img (js/Function. "this.observe=()=>{};"))
+        (is (= "600px" (.. img -style -width)))
+        (is (= "900px" (.. img -style -height)))
+        (is (= "0px" (.. img -style -left)))
+        (is (= expected (.. img -style -top)))))))
+
+(deftest mastodon-focal-point-upload
+  (async done
+         (let [original mastodon/multi-part-post+
+               calls (atom [])]
+           (set! mastodon/multi-part-post+
+                 (fn [path parts _]
+                   (swap! calls conj {:path path :parts parts})
+                   (js/Promise.resolve {:ok? true :status 200 :body {:id "media"}})))
+           (-> (mastodon/upload-screenshots+
+                {:limits limits :interesting-pages
+                 [{:image-path "photo.png" :text "Photo" :focus {:x 0.25 :y 0.25}}
+                  {:image-path "text.png" :text "Text"}]})
+               (.then (fn [uploaded]
+                        (is (= ["media" "media"] (mapv :media-id (:interesting-pages uploaded))))
+                        (is (= ["/api/v2/media" "/api/v2/media"] (mapv :path @calls)))
+                        (is (= {:name "focus" :value "-0.5,0.5"}
+                               (first (filter #(= "focus" (:name %)) (:parts (first @calls))))))
+                        (is (not-any? #(= "focus" (:name %)) (:parts (second @calls))))
+                        (is (thrown? js/Error (mastodon/upload-media+ {:path "bad.png" :description "Bad" :focus {:x 9 :y 0}})))))
+               (.catch #(is false (str %)))
+               (.finally (fn [] (set! mastodon/multi-part-post+ original) (done)))))))
 
 (defmethod test/report [::test/default :end-run-tests] [summary]
   (when-not (test/successful? summary)

@@ -4,6 +4,7 @@
             [bot.beu :as beu]
             [bot.date :as date]
             [bot.pdf :as pdf]
+            [bot.image-focus :as focus]
             [bot.post-draft :as draft]
             [bot.report-preview :as preview]
             [bot.source-sections :as sections]
@@ -88,11 +89,26 @@
       (str/replace ">" "&gt;") (str/replace "\"" "&quot;")
       (str/replace "'" "&#39;")))
 
-(defn page-html [{:keys [page image-path text raw-text alt image-description reason]}]
-  (str "<figure><a href=\"" (escape-html (last (str/split image-path #"/")))
+(defn focus-html [image-path point]
+  (when (focus/valid? point)
+    (str "<p>Mastodon focus: <code>" (escape-html (focus/mastodon point))
+         "</code>. Example 16:9 crop (actual crop depends on the client):</p>"
+         "<div class=\"focus-crop\" data-x=\"" (:x point) "\" data-y=\"" (:y point) "\">"
+         "<img alt=\"Example crop around the selected focal point\" src=\""
+         (escape-html (last (str/split image-path #"/")))
+         "\" onload=\"previewFocus(this)\"></div>")))
+
+(defn page-html [{:keys [page image-path text raw-text alt image-description reason roles focus]}]
+  (str "<figure><a class=\"page-image\" href=\"" (escape-html (last (str/split image-path #"/")))
        "\"><img loading=\"lazy\" src=\"" (escape-html (last (str/split image-path #"/")))
-       "\" alt=\"" (escape-html (or alt text)) "\"></a><figcaption>PDF page " page
-       (when reason (str " — " (escape-html reason))) "</figcaption>"
+       "\" alt=\"" (escape-html (or alt text)) "\">"
+       (when (focus/valid? focus)
+         (str "<span class=\"focus-marker\" title=\"Selected focus\" style=\"left:"
+              (* 100 (:x focus)) "%;top:" (* 100 (:y focus)) "%\"></span>"))
+       "</a><figcaption>PDF page " page
+       (when reason (str " — " (escape-html reason)))
+       (when (seq roles) (str " · " (escape-html (str/join ", " (map name roles))))) "</figcaption>"
+       (focus-html image-path focus)
        (when-not (str/blank? image-description)
          (str "<p>Bildbeschreibung: " (escape-html image-description) "</p>"))
        "<details><summary>Full page text</summary><pre>" (escape-html text) "</pre></details>"
@@ -121,7 +137,7 @@
          (when (seq (:dropped-tags post))
            (str "<p>Dropped tags: " (escape-html (str/join ", " (:dropped-tags post))) "</p>")))))
 
-(defn comparison-html [{:keys [report baseline ai model cached? validation-errors source-sections raw-source-sections text-policy]}]
+(defn comparison-html [{:keys [report baseline ai model cached? validation-errors source-sections raw-source-sections text-policy image-candidates proposed-image-candidates image-verifications]}]
   (str "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
        "<title>BEU preview comparison</title><style>"
@@ -130,9 +146,21 @@
        "section{background:white;padding:1.5rem;border-radius:12px}"
        "pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.5}"
        "figure{margin:1rem 0}img{width:100%;max-height:620px;object-fit:contain;background:#eee}"
+       ".page-image{display:block;position:relative;max-width:440px;margin:auto}"
+       ".page-image img{display:block;max-height:none;height:auto}"
+       ".focus-marker{position:absolute;transform:translate(-50%,-50%);width:24px;height:24px;border:3px solid white;border-radius:50%;box-shadow:0 0 0 2px #d21;pointer-events:none}"
+       ".focus-crop{position:relative;aspect-ratio:16/9;overflow:hidden;background:#eee}"
+       ".focus-crop img{position:absolute;width:auto;height:auto;max-width:none;max-height:none}"
        "figcaption{margin:.5rem 0}.ok{color:#176636}.error{color:#b02020}"
        "@media(max-width:800px){main{grid-template-columns:1fr}body{margin:1rem}}"
-       "</style><h1>" (escape-html (-> report :post :title)) "</h1>"
+       "</style><script>function previewFocus(img){const box=img.parentElement;"
+       "const draw=()=>{const w=box.clientWidth,h=box.clientHeight;"
+       "const scale=Math.max(w/img.naturalWidth,h/img.naturalHeight);"
+       "const iw=img.naturalWidth*scale,ih=img.naturalHeight*scale;"
+       "img.style.width=iw+'px';img.style.height=ih+'px';"
+       "img.style.left=Math.min(0,Math.max(w-iw,w/2-Number(box.dataset.x)*iw))+'px';"
+       "img.style.top=Math.min(0,Math.max(h-ih,h/2-Number(box.dataset.y)*ih))+'px';};"
+       "draw();new ResizeObserver(draw).observe(box);}</script><h1>" (escape-html (-> report :post :title)) "</h1>"
        "<p>Dry run · " (escape-html model) (if cached? " · cached" " · newly generated")
        " · <a href=\"" (escape-html (:report-overview-uri report)) "\">BEU report</a>"
        " · <a href=\"report.pdf\">Source PDF</a> · <a href=\"comparison.json\">JSON drafts</a></p>"
@@ -161,13 +189,21 @@
               "Full repaired page text is used in image alt text. "
               "<a href=\"" (escape-html (str (last (butlast (str/split (:repaired-pdf-path report) #"/"))) "/repaired.pdf"))
               "\">Repaired PDF copy</a></p>"))
+       (when image-candidates
+         (str "<section><h2>Image selection roles</h2><pre>" (escape-html (json image-candidates))
+              "</pre><p>Page 1 and the detected summary are fixed; missing photo/map slots use following pages. Final pages are unique and sorted.</p></section>"))
+       (when image-verifications
+         (str "<details><summary>Single-page visual checks</summary><pre>" (escape-html (json image-verifications))
+              "</pre><h3>Original whole-report proposal</h3><pre>" (escape-html (json proposed-image-candidates)) "</pre></details>"))
+       (when (:missing-source? text-policy)
+         "<p class=\"error\">No event-description section was detected. Mastodon shows only the headline for image review; this is not a publishable text draft.</p>")
        (when text-policy
          (str "<p>Text: " (if (= "shortened" (name (:mode text-policy))) "AI shortened because the original exceeded the platform limit"
                               "copied programmatically from the repaired source")
               ". Folgen: " (if (:included-consequences? text-policy) "included" "omitted") ".</p>"))
-       "<main><section><h2>Current bot</h2><p>Original template with the full URL, before link shortening.</p>"
+       "<main><section><h2>Original programmatic baseline</h2><p>Original template with the full URL, before link shortening.</p>"
        (str/join (map (fn [[platform post]] (post-html platform post)) (:posts baseline)))
-       (str/join (map page-html (:pages baseline))) "</section><section><h2>New preview · source text + AI images</h2>"
+       (str/join (map page-html (:pages baseline))) "</section><section><h2>Shared bot / preview · source text + AI images</h2>"
        (str/join (map (fn [[platform post]] (post-html platform post)) (:posts ai)))
        (str/join (map page-html (:pages ai))) "<h3>Supporting quotations</h3>"
        (str/join (map (fn [{:keys [claim page quote]}]
@@ -234,7 +270,8 @@
                                       " — review " directory "/index.html") (ex-data error))))))))
 
 (defn preview-one+ [report limits opts]
-  (let [id (subs (:report-id report) 4 14)
+  (let [opts (assoc opts :image-policy :roles :image-review? true)
+        id (subs (:report-id report) 4 14)
         directory (str (:out opts) "/" id)
         prepared-state (atom nil)]
     (js/console.log (str "Preparing " (:event-location report) " (" id ")"))
@@ -242,7 +279,7 @@
         (.then (fn [prepared]
                  (reset! prepared-state prepared)
                  (-> (source-preview/cached-generation+ prepared limits opts directory)
-                     (.then (fn [{:keys [result posts usage attempt-usages cached? response-id text-policy]}]
+                     (.then (fn [{:keys [result posts usage attempt-usages cached? response-id text-policy image-candidates proposed-image-candidates image-verifications]}]
                               (let [baseline (pdf/select-interesting-pages+ prepared)
                                     proposed (assoc prepared :interesting-pages
                                                     (selected-pages prepared (:pages result)))]
@@ -253,7 +290,8 @@
                                                                :report (dissoc prepared :pages :raw-pages)
                                                                :model (:model opts) :cached? cached? :accepted? true
                                                                :limits limits :usage usage :attempt-usages attempt-usages
-                                                               :response-id response-id :text-policy text-policy
+                                                               :response-id response-id :text-policy text-policy :text-accepted? (not (:missing-source? text-policy)) :image-candidates image-candidates
+                                                               :proposed-image-candidates proposed-image-candidates :image-verifications image-verifications
                                                                :baseline {:posts (original-posts prepared limits)
                                                                           :pages (:interesting-pages baseline)}
                                                                :ai {:posts posts :pages (:interesting-pages proposed)

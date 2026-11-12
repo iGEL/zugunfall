@@ -50,7 +50,8 @@
                [])))
 
 (defn prepare-report+ [report limits opts]
-  (let [directory (str (:out opts) "/" (subs (:report-id report) 4 14))]
+  (let [opts (assoc opts :image-policy :roles :image-review? false)
+        directory (str (:out opts) "/" (subs (:report-id report) 4 14))]
     (log (str "Preparing source-text post for " (:report-id report)))
     (-> (source-preview/prepare+ report directory)
         (.then (fn [prepared]

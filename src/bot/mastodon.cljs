@@ -1,6 +1,7 @@
 (ns bot.mastodon
   (:require
    [bot.http :as http]
+   [bot.image-focus :as focus]
    [bot.log :refer [log]]
    [bot.post-draft :as draft]
    [clojure.string :as string]))
@@ -85,11 +86,12 @@
        (str (.join (.slice characters 0 (dec max-length)) "") "…")
        description))))
 
-(defn upload-media+ [{:keys [path description content-type description-limit] :as report}]
+(defn upload-media+ [{:keys [path description content-type description-limit focus] :as report}]
   (-> (multi-part-post+ "/api/v2/media"
-                        [{:name "description" :value (shortened-description description
-                                                                            (or description-limit description-max-length))}
-                         {:name "file" :file path :content-type content-type}]
+                        (cond-> [{:name "description" :value (shortened-description description
+                                                                              (or description-limit description-max-length))}
+                                 {:name "file" :file path :content-type content-type}]
+                          (some? focus) (conj {:name "focus" :value (focus/mastodon focus)}))
                         {:headers {:authorization (str "Bearer " access-token)}})
       (.then (fn [{:keys [status headers], :as response}]
                (if (= 429 status)
@@ -104,10 +106,11 @@
       (.then http/ensure-ok+)))
 
 (defn upload-screenshots+ [{:keys [interesting-pages limits] :as report}]
-  (-> (js/Promise.all (map (fn [{:keys [text alt image-path content-type]}]
+  (-> (js/Promise.all (map (fn [{:keys [text alt image-path content-type focus]}]
                              (upload-media+ {:path image-path
                                              :description (or alt text)
                                              :description-limit (:description_limit limits)
+                                             :focus focus
                                              :content-type content-type}))
                            interesting-pages))
       (.then (fn [responses]
